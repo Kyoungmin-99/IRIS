@@ -809,7 +809,7 @@ async function mineHairMatte(): Promise<typeof mineHair> {
   // 밖으로 날린 가는 잔머리도 같이 물들인다(안 하면 밝은 염색에서 머리 둘레가 검은 테두리처럼 남는다)
   flyaways(rgba, W, H, alpha, rect.size / 20, faceP);
   // 가르마 두피·시스루 앞머리 사이 이마처럼 피부색인 곳은 덜 물들인다(밝게 염색하면 거친 밝은 얼룩이 됐다)
-  skinGate(rgba, alpha, faceP, W);
+  skinGate(rgba, alpha, faceP, W, faceBox(faceOnly, W, H)?.y1 ?? Infinity);
   // 머리 가장자리 알파를 색으로 다시 잰다(덜 물든 원래 검정이 이마 선을 따라 검은 줄로 남지 않게).
   // 귀 거르기보다 먼저: 뒤에 하면 깎아 낸 귀 테두리를 다시 머리 몫으로 올려 귀 테가 초록으로 물들었다
   console.debug('[hair] 가장자리 알파', edgeAlpha(rgba, alpha, W, H, faceP));
@@ -1601,10 +1601,11 @@ async function updateStillHair(): Promise<void> {
           const span = rb?.ombre ? hairSpan(mine.alpha, mine.w) : null;
           out = recolorHair(mine.rgba, mine.w, mine.h, mine.alpha, mine.dist, ref, Math.min(1, amount), 1, rb && span ? { ref: rb, ...span } : null, rb?.lowSpread ?? null);
           // 머니피스: 내 얼굴 양옆 앞머리 띠는 고른 사진의 밝은 앞머리 색으로(띠 끝은 부드럽게 섞음)
-          const fb = refHair?.front ? frontBand(mine.face, mine.w, mine.h) : null;
+          const fb = refHair?.front ? frontBand(mine.face, mine.w, mine.h, true) : null;
           if (fb && refHair?.front) {
             const fo = recolorHair(mine.rgba, mine.w, mine.h, mine.alpha, mine.dist, refHair.front, Math.min(1, amount), 1, null, null);
-            const fs = boxBlur(fb, mine.w, mine.h, Math.max(2, Math.round(Math.min(mine.w, mine.h) / 120)));
+            // 띠 끝은 넓게 흐려(그림 짧은 변의 1/60) 가닥을 가로지르는 세로 직선이 보이지 않게. 가닥 밝기로 섞어 보니 긁힌 자국·얼룩이 생겨 넣지 않음
+            const fs = boxBlur(fb, mine.w, mine.h, Math.max(2, Math.round(Math.min(mine.w, mine.h) / 60)));
             for (let i = 0; i < fs.length; i++) {
               const k = fs[i];
               if (k <= 0.01) continue;

@@ -716,3 +716,17 @@ test('얼굴 상자: 목 아래 가슴 피부(얼굴로 읽힘)와 앞머리 위
   assert.deepEqual([b.y0, b.y1, b.x0, b.x1], [30, 79, 35, 64]);
   assert.ok(frontBand(face, w, h), '가슴이 상자를 늘려도 채움 때문에 띠가 사라지지 않음');
 });
+
+test('피부 거르기: 턱 아래 흑발 끝의 따뜻한 갈색 가닥은 그늘진 피부로 깎지 않는다(턱 위 그늘진 이마는 그대로 깎음)', () => {
+  // 30×30: 0~7 줄 흑발 + 따뜻한 갈색 칸, 8~19 줄 밝은 얼굴 피부, 턱 줄 19, 20~ 줄 흑발 + 갈색 가닥
+  const w = 30, h = 30, n = w * h, rgba = new Uint8ClampedArray(n * 4), alpha = new Float32Array(n), face = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, skin = y >= 8 && y < 20 && x >= 8, brown = x >= 4 && x < 6;
+    rgba.set(skin ? [225, 180, 160, 255] : brown ? [110, 74, 53, 255] : [8, 8, 9, 255], i * 4);
+    alpha[i] = skin ? 0 : brown ? 0.8 : 1;
+    face[i] = skin ? 1 : 0;
+  }
+  skinGate(rgba, alpha, face, w, 19);
+  assert.ok(alpha[5 * w + 4] < 0.3, `턱 위 ${alpha[5 * w + 4]}`);
+  assert.ok(alpha[27 * w + 4] > 0.75, `턱 아래 ${alpha[27 * w + 4]}`);
+});
