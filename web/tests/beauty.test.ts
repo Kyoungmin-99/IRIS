@@ -541,3 +541,19 @@ test('타투 영역 고르기: 피부 가장자리의 어두운 조각(손등·�
   const r = proposeRect({ w, h, d, skin })!;
   assert.ok(r && r.x < 100 && r.x + r.w > 100 && r.y < 80 && r.y + r.h < 140, `영역 ${JSON.stringify(r)}`);
 });
+
+test('입술 클로즈업: 사진 가장자리를 덮은 아주 진한 빨간 배경은 립 색으로 읽지 않는다', () => {
+  const w = 100, h = 80, d = new Uint8ClampedArray(w * h * 4);
+  // 왼쪽 2/3 진한 빨간 배경(위·아래·왼쪽 가장자리), 오른쪽 피부, 피부 위 코랄 립
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let c = x < 66 ? [210, 22, 24] : [228, 186, 164];
+    if (y > 30 && y < 50 && x > 70 && x < 95) c = [232, 110, 100];
+    d.set([...c, 255], (y * w + x) * 4);
+  }
+  const lip = lipCloseup(d, w, h)!;
+  assert.ok(lip, '립 색');
+  assert.ok(Math.abs(lip[1] * 255 - 110) < 12, `배경 대신 립 ${lip.map((v) => Math.round(v * 255))}`);
+  // 배경만 있고 립이 없으면 없음
+  for (let i = 0; i < w * h; i++) d.set([210, 22, 24, 255], i * 4);
+  assert.equal(lipCloseup(d, w, h), null);
+});

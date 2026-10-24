@@ -127,15 +127,42 @@ export function isSkin(c: RGB): boolean {
  */
 export function lipCloseup(d: Uint8ClampedArray, w: number, h: number): RGB | null {
   const lab = new Float32Array(3);
-  const cand: { c: number; i: number }[] = [];
-  let n = 0;
-  for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
-    const o = (y * w + x) * 4;
-    n++;
+  // 2픽셀 간격 격자에서 후보(붉은~코랄, 채도 높음)와 그 채도
+  const gw = Math.ceil(w / 2), gh = Math.ceil(h / 2), n = gw * gh;
+  const Cg = new Float32Array(n).fill(-1);
+  for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+    const o = (gy * 2 * w + gx * 2) * 4;
     rgb2labS(d[o], d[o + 1], d[o + 2], lab);
     const C = Math.hypot(lab[1], lab[2]), hue = (Math.atan2(lab[2], lab[1]) * 180) / Math.PI;
     if (lab[0] < 20 || lab[0] > 82 || C < 28 || hue < -25 || hue > 55) continue;
-    cand.push({ c: C, i: o });
+    Cg[gy * gw + gx] = C;
+  }
+  // 이어진 덩어리마다: 사진 가장자리 셋 이상에 닿고 아주 진한(채도 가운데 65 넘게) 덩어리는 배경이다.
+  // 빨간 배경 앞 글리터 립 클로즈업에서 배경(C 82)을 립 색으로 읽어 주황빛 빨강 입술이 됐다(입술 클로즈업 덩어리는 C 30~51)
+  const comp = new Int32Array(n).fill(-1), stack: number[] = [];
+  const cand: { c: number; i: number }[] = [];
+  for (let s0 = 0; s0 < n; s0++) {
+    if (Cg[s0] < 0 || comp[s0] >= 0) continue;
+    const members: number[] = [];
+    let edges = 0;
+    comp[s0] = s0;
+    stack.push(s0);
+    while (stack.length) {
+      const k = stack.pop()!;
+      members.push(k);
+      const gx = k % gw, gy = (k / gw) | 0;
+      if (gx === 0) edges |= 1;
+      if (gx === gw - 1) edges |= 2;
+      if (gy === 0) edges |= 4;
+      if (gy === gh - 1) edges |= 8;
+      for (const q of [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1]) {
+        if (q >= 0 && Cg[q] >= 0 && comp[q] < 0) { comp[q] = s0; stack.push(q); }
+      }
+    }
+    const nEdges = (edges & 1) + ((edges >> 1) & 1) + ((edges >> 2) & 1) + ((edges >> 3) & 1);
+    const cs = members.map((k) => Cg[k]).sort((p, q) => p - q);
+    if (nEdges >= 3 && cs[cs.length >> 1] > 65) continue;
+    for (const k of members) cand.push({ c: Cg[k], i: (((k / gw) | 0) * 2 * w + (k % gw) * 2) * 4 });
   }
   if (cand.length < n * 0.04) return null;
   cand.sort((p, q) => p.c - q.c);
