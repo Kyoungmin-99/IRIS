@@ -2068,7 +2068,26 @@ async function nailsByColor(
  * 사진 격자 점마다 SAM 으로 오려 손톱 모양 후보만 남긴다 — 사진의 0.08~4%, 길쭉한 꽉 찬 모양(길이/폭 1.1~3.5, 채움 0.7 넘게),
  * 둘레와 색이 다르고(6 넘게) 둘레가 대부분 피부(손가락 끝마디 전체·배경 조각은 둘레가 배경), 그리고 서로 크기·색이 닮은 것 셋 이상
  */
-async function nailsBySamGrid(rgba: Uint8ClampedArray, w: number, h: number, getSam: () => Promise<SamImage>): Promise<{ mask: Uint8Array; frame: NailFrame }[]> {
+async function nailsBySamGrid(rgbaFull: Uint8ClampedArray, W: number, H: number, getSam: () => Promise<SamImage>): Promise<{ mask: Uint8Array; frame: NailFrame }[]> {
+  // 후보 고르기는 긴 변 640 으로 줄여서: 큰 사진(2400²)은 점마다 마스크 셋을 원래 크기로 되키우고 훑느라 격자 한 번에 1분 넘게 걸렸다.
+  // 남은 손톱만 원래 크기로 다시 오린다
+  const s = Math.min(1, 640 / Math.max(W, H));
+  const w = Math.max(1, Math.round(W * s)), h = Math.max(1, Math.round(H * s));
+  let rgba = rgbaFull;
+  if (s < 1) {
+    rgba = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const x0 = Math.floor(x / s), x1 = Math.max(x0 + 1, Math.floor((x + 1) / s)), y0 = Math.floor(y / s), y1 = Math.max(y0 + 1, Math.floor((y + 1) / s));
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let yy = y0; yy < Math.min(H, y1); yy++) for (let xx = x0; xx < Math.min(W, x1); xx++) {
+        const o = (yy * W + xx) * 4;
+        r += rgbaFull[o]; g += rgbaFull[o + 1]; b += rgbaFull[o + 2]; n++;
+      }
+      const o = (y * w + x) * 4;
+      rgba[o] = r / n; rgba[o + 1] = g / n; rgba[o + 2] = b / n; rgba[o + 3] = 255;
+    }
+  }
+  const size = s < 1 ? { w, h } : undefined;
   const step = Math.max(8, Math.round(Math.min(w, h) / 10));
   const isSkin = (o: number): boolean => {
     const r = rgba[o], g = rgba[o + 1], b = rgba[o + 2];
@@ -2077,13 +2096,13 @@ async function nailsBySamGrid(rgba: Uint8ClampedArray, w: number, h: number, get
   };
   let sam: SamImage | null = null;
   const covered = new Uint8Array(w * h);
-  const cands: { mask: Uint8Array; frame: NailFrame; area: number; lab: Float32Array }[] = [];
+  const cands: { mask: Uint8Array; frame: NailFrame; area: number; lab: Float32Array; x: number; y: number }[] = [];
   for (let y = step >> 1; y < h; y += step) for (let x = step >> 1; x < w; x += step) {
     const i = y * w + x;
     // 손 위(피부·누드 손톱 색)의 점만
     if (covered[i] || !isSkin(i * 4)) continue;
     sam ??= await getSam();
-    const r = await sam.segment(x, y);
+    const r = await sam.segment(x / s, y / s, size);
     // 가장 확신한 마스크가 손가락·손 전체일 때가 많다: 다른 후보(작은 쪽부터)에서 손톱 모양을 찾는다
     const opts = [{ mask: r.mask, score: r.score }, ...r.alts.map((a) => ({ mask: a.mask, score: a.score }))];
     let pick: { m: Uint8Array; f: NailFrame; ma: number } | null = null;
@@ -2130,7 +2149,7 @@ async function nailsBySamGrid(rgba: Uint8ClampedArray, w: number, h: number, get
     const med = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1];
     const lab = new Float32Array(3);
     rgb2lab(med(rs), med(gs), med(bs), lab);
-    cands.push({ mask: m, frame: f, area: ma, lab });
+    cands.push({ mask: m, frame: f, area: ma, lab, x, y });
   }
   if (cands.length < 3) return [];
   // 같은 손의 손톱끼리는 크기(0.35~2.8배)와 색(ΔE 18 안)이 닮았다
@@ -2138,7 +2157,29 @@ async function nailsBySamGrid(rgba: Uint8ClampedArray, w: number, h: number, get
   const mid = [0, 1, 2].map((j) => cands.map((c) => c.lab[j]).sort((p, q) => p - q)[cands.length >> 1]);
   const keep = cands.filter((c) => c.area >= medA * 0.35 && c.area <= medA * 2.8 && Math.hypot(c.lab[0] - mid[0], c.lab[1] - mid[1], c.lab[2] - mid[2]) < 18);
   console.debug('[nail] samGrid', cands.length, '→', keep.length);
-  return keep.length >= 3 ? keep.map((c) => ({ mask: c.mask, frame: c.frame })) : [];
+  if (keep.length < 3) return [];
+  if (!size) return keep.map((c) => ({ mask: c.mask, frame: c.frame }));
+  // 원래 크기로: 같은 점을 다시 오려 줄인 마스크와 가장 많이 겹치는 후보(가장자리가 매끈하다), 못 맞추면 줄인 마스크를 키운다
+  const out: { mask: Uint8Array; frame: NailFrame }[] = [];
+  for (const c of keep) {
+    const up = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      const sy = Math.min(h - 1, Math.floor(y * s)) * w;
+      for (let x = 0; x < W; x++) up[y * W + x] = c.mask[sy + Math.min(w - 1, Math.floor(x * s))];
+    }
+    const r = await sam!.segment(c.x / s, c.y / s);
+    let best = up, bestIou = 0.6;
+    for (const m of [r.mask, ...r.alts.map((q) => q.mask)]) {
+      const fm = new Uint8Array(m);
+      hullFill(fm, W, H);
+      let inter = 0, uni = 0;
+      for (let k = 0; k < fm.length; k++) { inter += fm[k] & up[k]; uni += fm[k] | up[k]; }
+      if (uni && inter / uni > bestIou) { bestIou = inter / uni; best = fm; }
+    }
+    const f = nailFrame(best, W, H, null, rgbaFull);
+    if (f) out.push({ mask: best, frame: f });
+  }
+  return out.length >= 3 ? out : [];
 }
 /** 사진은 거울상이 아니라 왼손·오른손 판단이 뒤바뀌기도 한다: 손등 방향 두 가지 중 손톱이 더 잘 보이는 쪽 */
 function bestQuads(hp: { p: { x: number; y: number }[]; z: number[]; handed: string }): ReturnType<typeof nailQuads> {

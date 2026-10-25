@@ -35,8 +35,8 @@ export interface SamImage {
   w: number;
   h: number;
   /** 점(그림 픽셀) → 마스크(0/1, w×h)와 점수 */
-  /** alts: 고르지 않은 나머지 후보(넓이 오름차순) */
-  segment(x: number, y: number): Promise<{ mask: Uint8Array; score: number; alts: { mask: Uint8Array; score: number; area: number }[] }>;
+  /** alts: 고르지 않은 나머지 후보(넓이 오름차순). size 를 주면 그 크기로 줄인 마스크(큰 사진을 여러 점 훑을 때: 되키우기가 대부분의 시간) */
+  segment(x: number, y: number, size?: { w: number; h: number }): Promise<{ mask: Uint8Array; score: number; alts: { mask: Uint8Array; score: number; area: number }[] }>;
 }
 
 /** 그림(캔버스) 하나의 특징을 계산해 둔다 */
@@ -45,20 +45,24 @@ export async function samImage(canvas: HTMLCanvasElement): Promise<SamImage> {
   const image = await tf.RawImage.fromCanvas(canvas);
   const first = await processor(image, { input_points: [[[canvas.width / 2, canvas.height / 2]]] });
   const emb = await model.get_image_embeddings(first);
+  // 처리기가 점을 옮긴 비율(그림 → 1024 크기)
+  const fx = first.input_points.data[0] / (canvas.width / 2), fy = first.input_points.data[1] / (canvas.height / 2);
+  const PointTensor = first.input_points.constructor as new (type: string, data: Float32Array, dims: number[]) => Tensor;
   const w = canvas.width;
   const h = canvas.height;
   return {
     w,
     h,
-    async segment(x: number, y: number) {
-      const inputs = await processor(image, { input_points: [[[x, y]]] });
-      const out = await model({ ...emb, input_points: inputs.input_points, input_labels: inputs.input_labels });
-      const masks = await processor.post_process_masks(out.pred_masks, inputs.original_sizes, inputs.reshaped_input_sizes);
+    async segment(x: number, y: number, size?: { w: number; h: number }) {
+      // 점 좌표만 처리기와 같은 비율로 바꾼다: 점마다 처리기를 부르면 사진 전체를 다시 줄이고 정규화해 한 점에 수백 ms 가 들었다
+      const input_points = new PointTensor('float32', Float32Array.of(x * fx, y * fy), first.input_points.dims);
+      const out = await model({ ...emb, input_points, input_labels: first.input_labels });
+      const masks = await processor.post_process_masks(out.pred_masks, (size ? [[size.h, size.w]] : first.original_sizes) as unknown as Tensor, first.reshaped_input_sizes);
       const sc = Array.from(out.iou_scores.data as ArrayLike<number>);
       // 세 후보(작은 부분 → 큰 덩어리) 중 손톱 하나: 점수가 가장 좋은 것에 가까운(0.08 안) 것 가운데 가장 작은 것.
       // 가장 좋은 점수만 고르면 손톱+손가락 전체 같은 큰 덩어리가 자주 이긴다. 사진의 8% 넘는 덩어리는 깎는다
       const m = masks[0].data;
-      const n = w * h;
+      const n = size ? size.w * size.h : w * h;
       const cand: { k: number; area: number; s: number }[] = [];
       for (let k = 0; k < sc.length; k++) {
         let area = 0;
