@@ -34,7 +34,7 @@ import { DEFAULT_TRACKER_CONFIG, type Delegate, type TrackerConfig } from '../en
 import { StickerGL } from '../engine/sticker-gl.ts';
 import { parseFace } from '../beauty/face-parse.ts';
 import { boxBlur, closeHoles, colorGate, earGate, edgeAlpha, faceBox, fillInterior, flyaways, frontBand, guidedFilter, hairBands, hairCore, pureHair, Q, rgb2lab, sideRuns, skinGate, hairDist, hairSpan, recolorHair, type HairBands, type HairDist } from '../beauty/still-hair.ts';
-import { growNailMask, hullFill, maskContrast, nailFrame, rimContrast, splitPolished, syntheticNail, transferNail, type NailFrame } from '../beauty/still-nail.ts';
+import { growNailMask, hullFill, maskContrast, nailFrame, nailSkinFraction, rimContrast, splitPolished, syntheticNail, transferNail, type NailFrame } from '../beauty/still-nail.ts';
 import { samImage, type SamImage } from '../beauty/sam.ts';
 import { fillPoly, swapFace } from '../beauty/face-swap.ts';
 import { transferMakeup, type MakeupAmounts } from '../beauty/still-makeup.ts';
@@ -1691,6 +1691,17 @@ let nailExpect = 0;
  * (파란 옴브레 09번: 맨 왼쪽의 초점 나간 손톱이 첫 손톱으로 쓰여 내 엄지에 흐릿한 파란 덩어리 + 검은 조각이 찍혔다) */
 function rankNails(rgba: Uint8ClampedArray, w: number, h: number, nails: { mask: Uint8Array; frame: NailFrame }[]): { mask: Uint8Array; frame: NailFrame }[] {
   if (nails.length < 2) return nails;
+  // 매니큐어 손톱들(피부색 비율 가운데 값 0.15 이하) 사이에서 피부색이 30% 넘는 '손톱'은 손톱 일부와 손가락 끝 살을 한 덩어리로 잡은 것:
+  // 이 틀로 옮기면 내 손톱에 고른 사진의 살색 판과 작은 매니큐어 조각이 찍혔다(버건디 니트 네일 12번, 0,0,0,0,0.4).
+  // 프렌치(0.11~0.24)·모카 크롬처럼 손톱 색이 살색에 가까운 사진은 가운데 값이 높아 건드리지 않는다
+  const sf = nailSkinFraction(rgba, w, h, nails.map((n) => n.mask));
+  if ([...sf].sort((a, b) => a - b)[sf.length >> 1] <= 0.15) {
+    const clean = nails.filter((_, k) => sf[k] < 0.3);
+    if (clean.length >= 2 && clean.length < nails.length) {
+      console.log('[nail] 고른 사진 손톱 중 손가락 살이 섞인 것 뺌', sf.map((v) => +v.toFixed(2)));
+      nails = clean;
+    }
+  }
   const lum = (i: number): number => 0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2];
   const q = nails.map((n) => {
     let s = 0, s2 = 0, cnt = 0, dark = 0, all = 0;

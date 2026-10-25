@@ -169,3 +169,18 @@ test('가상 손톱: 손톱 밖도 가장자리 색이라 끝 가장자리 표�
   assert.equal(n.mask[0], 0);
   assert.equal(n.mask[Math.floor(n.h / 2) * n.w + Math.floor(n.w / 2)], 1);
 });
+
+test('손톱 피부색 비율: 손가락 끝 살까지 잡은 마스크만 높다', async () => {
+  const { nailSkinFraction } = await import('../src/beauty/still-nail.ts');
+  const W = 200, H = 100;
+  // 살색 바탕에 버건디 손톱 둘. 둘째 마스크는 손톱 아래 살까지 길게
+  const rgba = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) rgba.set([224, 172, 150, 255], i * 4);
+  const a = ellipse(W, H, 50, 40, 20, 12, Math.PI / 2), b = ellipse(W, H, 150, 40, 20, 12, Math.PI / 2);
+  for (const m of [a, b]) for (let i = 0; i < W * H; i++) if (m[i]) rgba.set([110, 20, 40, 255], i * 4);
+  const bLong = ellipse(W, H, 150, 55, 36, 13, Math.PI / 2);
+  for (let i = 0; i < W * H; i++) if (b[i]) bLong[i] = 1;
+  const [fa, fb] = nailSkinFraction(rgba, W, H, [a, bLong]);
+  assert.ok(fa < 0.05, `손톱 ${fa}`);
+  assert.ok(fb > 0.3, `살 섞인 손톱 ${fb}`);
+});

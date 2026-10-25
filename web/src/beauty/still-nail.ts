@@ -113,6 +113,50 @@ function cuticleSide(mask: Uint8Array, w: number, h: number, rgba: Uint8ClampedA
   return d1 < d0 ? 1 : -1;
 }
 
+/**
+ * 손톱마다 피부색 픽셀 비율(0~1). 피부색: 모든 손톱 둘레 띠(4~8px 밖)의 Lab 가운데 값, 그와 ΔE(밝기 절반 가중) 10 안이면 피부.
+ * 손톱 일부와 손가락 끝 살을 한 덩어리로 잡은 '손톱'은 이 비율이 높다
+ */
+export function nailSkinFraction(rgba: Uint8ClampedArray, w: number, h: number, masks: Uint8Array[]): number[] {
+  const lab = new Float32Array(3);
+  const ring: number[][] = [[], [], []];
+  const boxes = masks.map((m) => {
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let i = 0; i < m.length; i++) if (m[i]) { const x = i % w, y = (i / w) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return { x0, y0, x1, y1 };
+  });
+  masks.forEach((m, k) => {
+    const b = boxes[k];
+    if (b.x1 < 0) return;
+    for (let y = Math.max(0, b.y0 - 8); y <= Math.min(h - 1, b.y1 + 8); y += 2) for (let x = Math.max(0, b.x0 - 8); x <= Math.min(w - 1, b.x1 + 8); x += 2) {
+      const i = y * w + x;
+      if (masks.some((q) => q[i])) continue;
+      let near = false;
+      for (let d = 4; d <= 8 && !near; d += 4) for (const [dx, dy] of [[d, 0], [-d, 0], [0, d], [0, -d]]) {
+        const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h && m[yy * w + xx]) { near = true; break; }
+      }
+      if (!near) continue;
+      rgb2lab(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], lab);
+      ring[0].push(lab[0]); ring[1].push(lab[1]); ring[2].push(lab[2]);
+    }
+  });
+  if (!ring[0].length) return masks.map(() => 0);
+  const skin = ring.map((v) => v.sort((p, q) => p - q)[v.length >> 1]);
+  return masks.map((m, k) => {
+    const b = boxes[k];
+    let n = 0, s = 0;
+    for (let y = Math.max(0, b.y0); y <= b.y1; y++) for (let x = Math.max(0, b.x0); x <= b.x1; x++) {
+      const i = y * w + x;
+      if (!m[i]) continue;
+      n++;
+      rgb2lab(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], lab);
+      if (Math.hypot((lab[0] - skin[0]) * 0.5, lab[1] - skin[1], lab[2] - skin[2]) < 10) s++;
+    }
+    return n ? s / n : 0;
+  });
+}
+
 const hwAt = (f: NailFrame, u: number): number => {
   const p = Math.max(0, Math.min(BINS - 1.001, u * BINS - 0.5));
   const i = Math.floor(p);
