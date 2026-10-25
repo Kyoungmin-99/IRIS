@@ -2219,9 +2219,12 @@ async function ensureNailsOnce(): Promise<void> {
     let maxA = Math.max(base.w * base.h * 0.03, Math.min(base.w * base.h * 0.08, (areas[areas.length >> 1] ?? 0) * 1.6));
     // 손이 잡혔으면 손 크기로도 묶는다: 손톱은 손바닥 길이(손목→가운뎃손가락 뿌리)² 의 2~4%(긴 네일) → 10% 까지.
     // 전신 사진(00055)에서 사진 전체 색 찾기가 어두운 보라 소매(7,700px, 사진의 1%)를 손톱 하나로 잡아 소매에 네일 아트가 칠해졌음
+    // 단, 색으로 찾은 손톱이 넷 이상이고 그 넓이 가운데 값부터 손 크기 기준을 넘으면 손 점이 틀린 것이다: 긴 아몬드 네일을 가까이 찍은
+    // 사진에서 손 점 21개가 손톱 하나 위로 몰려(손 크기 130px) 제대로 찾은 손톱 다섯(5,200~8,700px)이 모두 버려졌다
     if (handsMine.length) {
       const hm = Math.max(...handsMine.map((hp) => Math.hypot(hp.p[9].x - hp.p[0].x, hp.p[9].y - hp.p[0].y)));
-      maxA = Math.min(maxA, hm * hm * 0.1);
+      const med = areas[areas.length >> 1] ?? 0;
+      if (!(areas.length >= 4 && med > hm * hm * 0.1)) maxA = Math.min(maxA, hm * hm * 0.1);
     }
     console.debug('[nail] maxA', Math.round(maxA), 'areas', areas.map((v) => Math.round(v)).join(','));
     for (const n of found) {
