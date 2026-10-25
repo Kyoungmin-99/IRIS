@@ -1707,6 +1707,12 @@ function rankNails(rgba: Uint8ClampedArray, w: number, h: number, nails: { mask:
     return { n, sharp, dark: all ? dark / all : 1 };
   });
   const best = Math.max(...q.map((v) => v.sharp));
+  // 손톱의 일부만 잡힌 조각(반사 줄무늬만 있는 작은 조각)은 결이 가장 또렷해 맨 앞에 서서 줄무늬 손톱으로 칠해졌다:
+  // 손톱 넓이 가운데 값의 35% 아래는 뺀다(셋 넘게 남을 때)
+  const area = (n: { mask: Uint8Array }) => n.mask.reduce((t, v) => t + v, 0);
+  const areas = nails.map(area).sort((a, b) => a - b), medA = areas[areas.length >> 1];
+  const whole = q.filter((v) => area(v.n) >= medA * 0.35);
+  if (whole.length >= 3 && whole.length < q.length) q.splice(0, q.length, ...whole);
   const good = q.filter((v) => v.sharp >= best * 0.3 && v.dark <= 0.08);
   const use = good.length >= 2 ? good : q;
   use.sort((a, b) => b.sharp - a.sharp);
@@ -1909,9 +1915,11 @@ async function nailsByColor(
     const mx = Math.max(r, g, b);
     if (mx < 35) continue; // 아주 어두움
     if (whiteBg && isWhite(o)) continue; // 흰·밝은 회색 배경
-    // 피부(YCbCr): 손가락은 빼고 손톱 후보만
+    // 피부(YCbCr): 손가락은 빼고 손톱 후보만. 고른 사진에서는 빨강에서 초록이 빠진 정도가 파랑이 빠진 정도의 35% 넘어야 피부
+    // (피부 0.45~0.8): 올리브·카키 네일(117,98,51 → 0.29)이 피부로 빠져 손톱 대신 어두운 틈을 잡았다. 내 손은 그대로
+    // (따뜻한 조명의 주먹 사진에서 피부 일부가 후보가 되어 손톱을 못 찾았다)
     const Y = 0.299 * r + 0.587 * g + 0.114 * b, Cb = 128 - 0.1687 * r - 0.3313 * g + 0.5 * b, Cr = 128 + 0.5 * r - 0.4187 * g - 0.0813 * b;
-    if (Y > 60 && Cr > 135 && Cr < 175 && Cb > 85 && Cb < 128 && r > g) continue;
+    if (Y > 60 && Cr > 135 && Cr < 175 && Cb > 85 && Cb < 128 && r > g && (expandRim || r - g >= 0.35 * (r - b))) continue;
     const k = (r >> 5) * 64 + (g >> 5) * 8 + (b >> 5);
     bin[y * gw + x] = k;
     counts.set(k, (counts.get(k) ?? 0) + 1);
@@ -1937,7 +1945,11 @@ async function nailsByColor(
   let best: { mask: Uint8Array; frame: NailFrame }[] = [];
   let bestCtr = 0;
   let sam: SamImage | null = null;
+  // 고른 사진에서 AI 가 읽은 네일 색이 어둡지 않으면 거의 검은 색 상자(손가락 사이 그늘·검은 옷)는 손톱 후보가 아니다:
+  // 올리브 네일 사진에서 손가락 사이 그늘(L 6)이 손톱 셋으로 뽑혔다
+  const labelDark = !nailLabelColor || 0.2126 * nailLabelColor[0] + 0.7152 * nailLabelColor[1] + 0.0722 * nailLabelColor[2] < 0.35;
   for (const k of top) {
+    if (!expandRim && !labelDark && (k >> 6) <= 1 && ((k >> 3) & 7) <= 1 && (k & 7) <= 1) continue;
     // 그 색(이웃 색 상자 포함) 덩어리
     const seen = new Uint8Array(gw * gh);
     const kWhite0 = (k >> 6) >= 6 && ((k >> 3) & 7) >= 6 && (k & 7) >= 6;
@@ -1970,7 +1982,8 @@ async function nailsByColor(
     let gotCtr = 0;
     // 거의 흰 색(반사)이면 손톱마다 반사가 여럿이라 더 많이 본다(같은 손톱은 겹침으로 하나만 남는다)
     const kWhite = (k >> 6) >= 6 && ((k >> 3) & 7) >= 6 && (k & 7) >= 6;
-    for (const b of blobs.slice(0, kWhite ? 12 : 4)) {
+    // 고른 사진은 10개까지: 빨간 손톱 열 개가 또렷한 두 손 사진에서 넷만 보고 셋을 찾아 손톱 그림이 모자랐다(하나는 반사 조각)
+    for (const b of blobs.slice(0, kWhite ? 12 : expandRim ? 4 : 10)) {
       const r = await sam.segment(b.x, b.y);
       let area = 0;
       for (let i = 0; i < r.mask.length; i++) area += r.mask[i];
@@ -2050,6 +2063,83 @@ async function nailsByColor(
   }
   return best;
 }
+/**
+ * 손 점도 색도 안 될 때(손가락만 가까이 찍어 손 찾기가 손을 못 잡고, 맨손톱·누드 네일은 피부색과 같아 색으로도 못 찾음):
+ * 사진 격자 점마다 SAM 으로 오려 손톱 모양 후보만 남긴다 — 사진의 0.08~4%, 길쭉한 꽉 찬 모양(길이/폭 1.1~3.5, 채움 0.7 넘게),
+ * 둘레와 색이 다르고(6 넘게) 둘레가 대부분 피부(손가락 끝마디 전체·배경 조각은 둘레가 배경), 그리고 서로 크기·색이 닮은 것 셋 이상
+ */
+async function nailsBySamGrid(rgba: Uint8ClampedArray, w: number, h: number, getSam: () => Promise<SamImage>): Promise<{ mask: Uint8Array; frame: NailFrame }[]> {
+  const step = Math.max(8, Math.round(Math.min(w, h) / 10));
+  const isSkin = (o: number): boolean => {
+    const r = rgba[o], g = rgba[o + 1], b = rgba[o + 2];
+    const Y = 0.299 * r + 0.587 * g + 0.114 * b, Cb = 128 - 0.1687 * r - 0.3313 * g + 0.5 * b, Cr = 128 + 0.5 * r - 0.4187 * g - 0.0813 * b;
+    return Y > 60 && Cr > 133 && Cr < 180 && Cb > 80 && Cb < 130 && r > g;
+  };
+  let sam: SamImage | null = null;
+  const covered = new Uint8Array(w * h);
+  const cands: { mask: Uint8Array; frame: NailFrame; area: number; lab: Float32Array }[] = [];
+  for (let y = step >> 1; y < h; y += step) for (let x = step >> 1; x < w; x += step) {
+    const i = y * w + x;
+    // 손 위(피부·누드 손톱 색)의 점만
+    if (covered[i] || !isSkin(i * 4)) continue;
+    sam ??= await getSam();
+    const r = await sam.segment(x, y);
+    // 가장 확신한 마스크가 손가락·손 전체일 때가 많다: 다른 후보(작은 쪽부터)에서 손톱 모양을 찾는다
+    const opts = [{ mask: r.mask, score: r.score }, ...r.alts.map((a) => ({ mask: a.mask, score: a.score }))];
+    let pick: { m: Uint8Array; f: NailFrame; ma: number } | null = null;
+    for (const c of opts) {
+      if (c.score < 0.7) continue;
+      let area = 0;
+      for (let k = 0; k < c.mask.length; k++) area += c.mask[k];
+      if (area < w * h * 0.0008 || area > w * h * 0.04 || touchesBorder(c.mask, w, h) > 0) continue;
+      const m = new Uint8Array(c.mask);
+      hullFill(m, w, h);
+      const f = nailFrame(m, w, h, null, rgba);
+      if (!f) continue;
+      const len = f.t1 - f.t0, wid = 2 * Math.max(...f.prof);
+      let ma = 0, sx = 0, sy = 0;
+      for (let k = 0; k < m.length; k++) if (m[k]) { ma++; sx += k % w; sy += (k / w) | 0; }
+      // 짧고 넓은 맨손톱은 길이/폭이 1 남짓
+      if (len / Math.max(1, wid) < 0.85 || len / Math.max(1, wid) > 3.5 || ma / Math.max(1, len * wid) < 0.7) continue;
+      if (maskContrast(rgba, w, h, m) < 4) continue;
+      // 둘레(바깥 띠)의 절반 넘게 피부여야 손톱(손가락 끝마디 전체·배경 조각은 둘레가 배경)
+      const rr = Math.max(3, Math.round(Math.sqrt(ma) * 0.12));
+      let ring = 0, ringSkin = 0;
+      for (let k = 0; k < m.length; k += 2) {
+        if (m[k]) continue;
+        const px = k % w, py = (k / w) | 0;
+        if (Math.abs(px - sx / ma) > len + rr * 2 || Math.abs(py - sy / ma) > len + rr * 2) continue;
+        let near = false;
+        for (let d = 1; d <= rr && !near; d++) for (const [dx, dy] of [[d, 0], [-d, 0], [0, d], [0, -d]]) {
+          const qx = px + dx, qy = py + dy;
+          if (qx >= 0 && qy >= 0 && qx < w && qy < h && m[qy * w + qx]) { near = true; break; }
+        }
+        if (!near) continue;
+        ring++;
+        if (isSkin(k * 4)) ringSkin++;
+      }
+      if (ring === 0 || ringSkin / ring < 0.5) continue;
+      if (!pick || ma < pick.ma) pick = { m, f, ma };
+    }
+    if (!pick) continue;
+    const { m, f, ma } = pick;
+    if (cands.some((c) => overlapFrac(c.mask, m) > 0.5)) continue;
+    for (let k = 0; k < m.length; k++) if (m[k]) covered[k] = 1;
+    const rs: number[] = [], gs: number[] = [], bs: number[] = [];
+    for (let k = 0; k < m.length; k += 3) if (m[k]) { rs.push(rgba[k * 4]); gs.push(rgba[k * 4 + 1]); bs.push(rgba[k * 4 + 2]); }
+    const med = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1];
+    const lab = new Float32Array(3);
+    rgb2lab(med(rs), med(gs), med(bs), lab);
+    cands.push({ mask: m, frame: f, area: ma, lab });
+  }
+  if (cands.length < 3) return [];
+  // 같은 손의 손톱끼리는 크기(0.35~2.8배)와 색(ΔE 18 안)이 닮았다
+  const areas = cands.map((c) => c.area).sort((p, q) => p - q), medA = areas[areas.length >> 1];
+  const mid = [0, 1, 2].map((j) => cands.map((c) => c.lab[j]).sort((p, q) => p - q)[cands.length >> 1]);
+  const keep = cands.filter((c) => c.area >= medA * 0.35 && c.area <= medA * 2.8 && Math.hypot(c.lab[0] - mid[0], c.lab[1] - mid[1], c.lab[2] - mid[2]) < 18);
+  console.debug('[nail] samGrid', cands.length, '→', keep.length);
+  return keep.length >= 3 ? keep.map((c) => ({ mask: c.mask, frame: c.frame })) : [];
+}
 /** 사진은 거울상이 아니라 왼손·오른손 판단이 뒤바뀌기도 한다: 손등 방향 두 가지 중 손톱이 더 잘 보이는 쪽 */
 function bestQuads(hp: { p: { x: number; y: number }[]; z: number[]; handed: string }): ReturnType<typeof nailQuads> {
   const a = nailQuads(hp, 1), b = nailQuads(hp, -1);
@@ -2120,7 +2210,10 @@ async function findRefNails(): Promise<void> {
     // 색도(a·b) 거리 13 넘거나 밝기 60 넘게 다르면: 밝기만 보면 어두운 배경의 크롬 실버(가운데 색 L 30, 이름 색 L 81, Δab 11)까지 버려졌다.
     // 흰 털옷 조각(회색, Δab 14.9) 은 버리고 누드 핑크 진짜 손톱(Δab 12.0) 은 남는 경계
     console.log('[nail] 고른 손톱 색 vs AI 이름 색', JSON.stringify({ nails: best.length, lab: Array.from(lab).map((v) => +v.toFixed(1)), label: Array.from(lab2).map((v) => +v.toFixed(1)) }));
-    if (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60) {
+    // 단, 셋 넘게 찾았고 색이 뚜렷하면(채도 15 넘게) 그늘·흰 털옷(채도 낮음)이 아니다: 올리브 손톱(채도 30)이 AI 이름 '민트·그린'의
+    // 민트색과 달라 버려지고 민트 가상 손톱이 칠해졌다
+    const vivid = best.length >= 3 && Math.hypot(lab[1], lab[2]) >= 15;
+    if (!vivid && (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60)) {
       refNails = { src, rgba, w, h, nails: [] };
       return;
     }
@@ -2240,6 +2333,16 @@ async function ensureNailsOnce(): Promise<void> {
     }
     if (myNails.length > byPose.length) colorFound = true;
     else myNails.splice(0, myNails.length, ...byPose);
+  }
+  // 손 점·색으로 셋도 못 찾았으면(손가락만 가까이 찍은 맨손톱·누드 네일) 사진 격자 SAM 으로 손톱 모양을 찾는다
+  if (myNails.length < 3) {
+    const base = stillRGBA();
+    const grid = await nailsBySamGrid(base.rgba, base.w, base.h, () => mySamImage());
+    if (grid.length > myNails.length) {
+      for (const n of grid) growNailMask(n.mask, base.w, base.h, base.rgba, 2);
+      myNails.splice(0, myNails.length, ...grid);
+      colorFound = true;
+    }
   }
   // 색으로 몇 개만 찾았어도(서로 낀 손) 그 손톱 색으로 나머지를 더 찾는다
   if (colorFound && myNails.length && myNails.length < 10) await moreNailsLikeMine(handsMine);

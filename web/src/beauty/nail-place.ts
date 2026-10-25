@@ -70,12 +70,13 @@ export function nailQuads(h: HandPoints, facingSign = 1): NailQuad[] {
     if (seg < 2) return;
     const dir = norm(sub(t, d));
     const thumb = i === 0;
-    // 손가락이 손바닥 쪽으로 접혀 끝이 손목 방향을 향하면 손톱은 반대편을 보고 있어 안 보인다
+    // 손가락이 손바닥 쪽으로 접혀 끝이 손목 방향을 향하면 손톱은 반대편을 보고 있어 안 보인다.
+    // 손목 → 뿌리 방향만 보면, 손목이 사진 밖이라 손 점이 엉뚱하게 추정되거나 손등을 위에서 찍어 손가락이 앞으로 늘어진 손에서
+    // 손톱 넷이 모두 '접힌 손가락'이 되어 빠졌다 → 같은 손가락 첫 마디(뿌리 → 둘째 마디) 방향과도 비교해 큰 쪽(주먹이면 둘 다 반대)
     let fingerVis = 1;
     if (!thumb) {
-      const handDir = norm(sub(h.p[mcp], h.p[0]));
-      const cos = dir.x * handDir.x + dir.y * handDir.y;
-      fingerVis = Math.min(1, Math.max(0, (cos + 0.1) / 0.4));
+      const vis = (ref: { x: number; y: number }) => Math.min(1, Math.max(0, (dir.x * ref.x + dir.y * ref.y + 0.1) / 0.4));
+      fingerVis = Math.max(vis(norm(sub(h.p[mcp], h.p[0]))), vis(norm(sub(h.p[tip - 2], h.p[mcp]))));
     }
     if (fingerVis * handVis < 0.02) return;
     // 손톱 길이: 마지막 마디의 약 절반. 끝점(TIP)은 손가락 끝에 거의 닿아 있으므로
