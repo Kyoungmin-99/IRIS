@@ -180,8 +180,27 @@ export function findInk(src: InkSource): { ink: Uint8Array; skin: Uint8Array; L:
     if (y < by0[c]) by0[c] = y;
     if (y > by1[c]) by1[c] = y;
   }
+  // 피부 가운데 색: 가장자리 띠 바깥이 이 색과 거의 같으면(분할이 맨살을 옷으로 잘못 읽은 경계) 몸 윤곽이 아니다
+  const lab3 = new Float32Array(3), sk: number[][] = [[], [], []];
+  for (let i = 0; i < n; i += 7) if (skin[i]) { rgb2lab(src.d[i * 4], src.d[i * 4 + 1], src.d[i * 4 + 2], lab3); sk[0].push(lab3[0]); sk[1].push(lab3[1]); sk[2].push(lab3[2]); }
+  const skMed = sk.map((v) => v.sort((p, q) => p - q)[v.length >> 1] ?? 0);
+  const outsideLikeSkin = (c: number): boolean => {
+    if (!sk[0].length) return false;
+    const r = Math.max(2, Math.round(short * 0.03));
+    let cnt = 0, like = 0;
+    for (let y = Math.max(0, by0[c] - r); y <= Math.min(h - 1, by1[c] + r); y += 2) for (let x = Math.max(0, bx0[c] - r); x <= Math.min(w - 1, bx1[c] + r); x += 2) {
+      const i = y * w + x;
+      if (skinRaw[i] || ink[i]) continue;
+      cnt++;
+      rgb2lab(src.d[i * 4], src.d[i * 4 + 1], src.d[i * 4 + 2], lab3);
+      if (Math.hypot((lab3[0] - skMed[0]) * 0.5, lab3[1] - skMed[1], lab3[2] - skMed[2]) < 8) like++;
+    }
+    return cnt > 20 && like > cnt * 0.6;
+  };
   for (let c = 1; c <= nc; c++) {
     if (area[c] < 4 || rim[c] <= area[c] * 0.8) continue;
+    // 'Inner Peace' 의 'ner' 가 팔 위쪽을 옷으로 잘못 읽은 경계 곁이라 윤곽선으로 빠졌다
+    if (outsideLikeSkin(c)) continue;
     const diag = Math.hypot(bx1[c] - bx0[c] + 1, by1[c] - by0[c] + 1);
     // 거의 다(95%) 가장자리 띠에 있고 아주 길쭉하면(대각선 / √넓이 6 넘게, 실제 10.5) 부드러운 그늘 윤곽선이라 굵기 기준을 두 배로:
     // 베이지 벽 앞 손목 사진의 팔 윤곽 그늘(평균 굵기 5.7, 기준 5.69)이 남아 그것이 도안으로 뽑혔다(무한대 타투 대신 긴 사선)
