@@ -28,12 +28,18 @@ export function ortWebRunner(modelUrl: string): ModelRunner {
     });
     return sessP;
   };
+  // 한 세션은 한 번에 하나씩 돌린다(사진 분석이 겹쳐 같은 모델을 동시에 부르면 onnxruntime-web 이 실패할 수 있다)
+  let queue: Promise<unknown> = Promise.resolve();
   return {
-    async run(input: Tensor): Promise<Tensor> {
-      const { ort, session } = await load();
-      const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', input.data, input.dims) });
-      const o = out[session.outputNames[0]];
-      return { data: o.data, dims: o.dims };
+    run(input: Tensor): Promise<Tensor> {
+      const job = queue.then(async () => {
+        const { ort, session } = await load();
+        const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', input.data, input.dims) });
+        const o = out[session.outputNames[0]];
+        return { data: o.data, dims: o.dims };
+      });
+      queue = job.catch(() => undefined);
+      return job;
     },
   };
 }

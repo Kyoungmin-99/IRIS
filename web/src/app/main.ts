@@ -452,26 +452,30 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   }
   applyLookToEngine();
   if (r.tattoo) {
-    tattoo.design = r.tattoo;
-    tattoo.wrap = sheetWhole;
-    if (sheetWhole) tattoo.size = 1;
-    // 사진 모드: 원본 해상도로 도안을 다시 뽑아 가는 선까지 살린다
+    // 사진 모드: 원본 해상도로 도안을 다시 뽑아 가는 선까지 살린다.
+    // 다시 뽑기(잉크 모델 몇 초)를 마친 뒤에 도안을 바꾼다: 먼저 바꾸면 그 사이에 규칙만으로 뽑은 도안(별 타투 반쪽 + 팔 윤곽 막대)이
+    // 한 번 구워져 보였다
     // (분석한 그림 기준 좌표이므로 ✂️ 영역으로 자른 경우에도 그 그림에서 다시 뽑는다)
     if (PHOTO_MODE && r.tattooSrc) {
       const hi = upscaleInkSource(r.tattooSrc.src, source, 1600);
       // 타투 잉크 모델(자체 학습): 잉크 확률을 함께 넘겨 밝기 대비 규칙이 놓친 잉크(분할이 옷으로 읽은 맨살 위)를 더하고 주름·그늘을 뺀다.
       // 모델을 못 불러오면 규칙만
-      hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, 1024).catch(() => undefined);
+      hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, 1024).catch((err) => {
+        console.warn('타투 잉크 모델을 쓰지 못했습니다(규칙만)', err);
+        return undefined;
+      });
       if (hi.scale > 1 || hi.src.inkProb) {
         const rc = r.tattooSrc.rect;
         const t = tattooFromSource(hi.src, { x: rc.x * hi.scale, y: rc.y * hi.scale, w: rc.w * hi.scale, h: rc.h * hi.scale }, 1600);
         if (t) {
-          tattoo.design = t.design;
           r.tattoo = t.design;
           r.tattooSrc = { src: hi.src, rect: t.rect, inkMask: t.inkMask, paper: r.tattooSrc.paper };
         }
       }
     }
+    tattoo.design = r.tattoo;
+    tattoo.wrap = sheetWhole;
+    if (sheetWhole) tattoo.size = 1;
     tattoo.along = tattoo.across = undefined;
     // 사진 모드: 팔 타투면 팔 대 팔로 옮겨 사진에 굽는다(still-tattoo.ts)
     // 블랙·블랙앤그레이 타투는 잉크를 무채색으로: 자홍 조명 아래 찍은 블랙앤그레이 소매(10번)가 내 팔에 보라 얼룩으로 옮겨졌다
@@ -1326,7 +1330,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       }
       // 얼굴 점도 관절점도 못 찾을 때가 있다(같은 셀카도 실행마다 다름 → 얼굴이 그대로 잉크로 남아 내 손목에 입술·콧구멍 조각):
       // 정밀 분할(BiSeNet)의 얼굴 채널(피부·눈·눈썹·코·입)로도 찾아 합친다. 사진 전체를 정사각형(검은 여백)으로 넣는다
-      let faceParse = 0;
+      let faceParse = 0, hairParse = 0;
       try {
         const size = Math.max(ref.w, ref.h), x0 = (ref.w - size) / 2, y0 = (ref.h - size) / 2;
         const fp = await parseFace(rc, { x: x0, y: y0, size });
@@ -1334,9 +1338,13 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         for (let y = 0; y < ref.h; y++) for (let x = 0; x < ref.w; x++) {
           const u = Math.floor(((x - x0) / size) * fp.size), v = Math.floor(((y - y0) / size) * fp.size);
           if (fp.face[v * fp.size + u] > 128) { m[y * ref.w + x] = 1; faceParse++; }
+          if (fp.hair[v * fp.size + u] > 128) hairParse++;
         }
-        // 작은 조각(사진의 0.2% 미만: 뒤에 선 다른 사람·오검출)은 무시, 둘레 2% 넓혀 눈썹·입술 가장자리까지
-        if (faceParse >= ref.w * ref.h * 0.002) {
+        // 작은 조각(사진의 0.2% 미만: 뒤에 선 다른 사람·오검출)은 무시, 둘레 2% 넓혀 눈썹·입술 가장자리까지.
+        // 머리카락이 거의 없으면(얼굴 넓이의 20% 미만) 얼굴로 보지 않는다: 이 모델의 '얼굴'은 피부까지 합친 채널이라
+        // 얼굴 없는 팔 클로즈업에서 팔 피부를 사진의 22% 나 얼굴로 읽어 별 타투의 궤도·작은 별을 지웠다
+        dbgTat({ hairParse });
+        if (faceParse >= ref.w * ref.h * 0.002 && (hairParse >= faceParse * 0.2 || (rp && rp.vis[0] > 0.5))) {
           const bl = boxBlur(m, ref.w, ref.h, Math.max(2, Math.round(size * 0.02)));
           const fm = faceM ?? new Float32Array(ref.w * ref.h);
           for (let i = 0; i < fm.length; i++) if (bl[i] > 0.01) fm[i] = 1;
@@ -1356,6 +1364,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       const dc = ref.design.canvas!;
       let ink: InkMap = { rgba: new Uint8ClampedArray(dc.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, dc.width, dc.height).data), w: dc.width, h: dc.height, rect: ref.rect };
       eraseFace(ink);
+      const designInk = ink;
       let total = 0;
       for (let i = 3; i < ink.rgba.length; i += 4) if (ink.rgba[i] >= 32) total += ink.rgba[i] / 255;
       // 몸통 타투(등·가슴): 잉크가 고른 사진 어깨~엉덩이 안에 절반 넘게 있으면 어깨·엉덩이 대응으로 옮긴다
@@ -1502,7 +1511,17 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       const onHand = async (): Promise<TatPlan | null> => {
         if (legs || !ink.w) return null;
         const hand = await handOf();
-        return hand ? handPlacePlan(ink, hand) : null;
+        if (!hand) return null;
+        // 고른 영역 도안(잉크 모델로 깨끗이 뽑힘)이 팔 전체 잉크만큼(60% 넘게) 담고 있으면 도안을 쓴다: 팔 전체에서 다시 뽑으면
+        // 별 타투가 반쪽만 남고 팔 윤곽 그늘이 막대로 붙었다. 도안이 일부만 잡힌 경우(십자가 가로대만)는 팔 전체 잉크
+        const mass = (k: InkMap) => {
+          let t = 0;
+          for (let i = 3; i < k.rgba.length; i += 4) if (k.rgba[i] >= 32) t += k.rgba[i] / 255;
+          return (t * k.rect.w * k.rect.h) / (k.w * k.h);
+        };
+        const pick = ink !== designInk && mass(designInk) >= mass(ink) * 0.6 ? designInk : ink;
+        dbgTat({ onHand: { design: Math.round(mass(designInk)), arm: Math.round(mass(ink)), useDesign: pick === designInk } });
+        return handPlacePlan(pick, hand);
       };
       if (!mp || !ms) return onHand();
       const mArms = armsOf(mp, ms, mc.width, mc.height, legs);
