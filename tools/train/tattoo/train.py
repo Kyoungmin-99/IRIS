@@ -62,6 +62,7 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--resume", default="", help="이어서 학습할 가중치(best.pt). 컨테이너가 다시 시작되면 학습이 끊긴다")
     a = ap.parse_args()
     random.seed(0)
     torch.manual_seed(0)
@@ -74,11 +75,16 @@ def main() -> None:
     dl = torch.utils.data.DataLoader(InkData(root, tr, True), batch_size=a.batch, shuffle=True, num_workers=2, drop_last=True)
     dv = torch.utils.data.DataLoader(InkData(root, val, False), batch_size=a.batch, shuffle=False, num_workers=1)
     model = UNet()
+    if a.resume:
+        model.load_state_dict(torch.load(a.resume, map_location="cpu"))
+        print(f"이어서 학습: {a.resume}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.epochs * len(dl))
     out = Path(a.out)
     (out / "samples").mkdir(parents=True, exist_ok=True)
     best = 0.0
+    if a.resume:
+        best = float("-inf")  # 이어서 할 때는 첫 회 결과부터 저장
     for ep in range(a.epochs):
         model.train()
         tot = 0.0
