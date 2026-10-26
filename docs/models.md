@@ -69,6 +69,9 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 **뒤처리** (`upsample`): 채운 칸을 뺀 유효 영역만 원래 크기로 양선형으로 키우며 시그모이드 → 잉크 확률(0~1, 원본 크기).
 **쓰는 곳**: 도안 뽑기(`tattoo-extract.ts`)의 `InkSource.inkProb` — 확률 0.6 넘는 곳은 잉크로 더하고, 덩어리 평균 0.06 아래는 빼고, 0.5 넘는 덩어리는 몸 윤곽선으로 보지 않는다.
 
+### 손등 피부 (모델 아님) — `core/hand-skin.ts`
+손만 찍은 사진에 타투를 굽기 전에, 몸 분할(MediaPipe selfie multiclass)의 몸 피부 확률에 손등 피부를 더한다(`handBackSkin(img, handPoints, bodySkin)`): 손 관절점 0·1·2·5·9·13·17 의 볼록 껍질을 1.15배로 키운 다각형 안에서, 밝기 합 120 넘는 픽셀의 색도(r/(r+g+b), g/(r+g+b)) 가운데값과의 거리가 0.025 아래면 1, 0.05 위면 0.
+
 ## 3. 머리카락 매팅 — `hair-matte-256.onnx` / `hair-matte-384.onnx`
 
 | 항목 | 값 |

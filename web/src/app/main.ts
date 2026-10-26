@@ -41,6 +41,7 @@ import { transferMakeup, type MakeupAmounts } from '../beauty/still-makeup.ts';
 import { denseSleeve, extractDesign, findInk, isDesignSheet, sheetRect, sleeveInk, type InkSource, neutralInk } from '../beauty/tattoo-extract.ts';
 import { affine3, armStrip, chestInkScale, inkOnArm, limbRegion, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, transferTorsoInk, type Arm, type InkMap, type Strip } from '../beauty/still-tattoo.ts';
 import { nailQuads } from '../beauty/nail-place.ts';
+import { handBackSkin } from '../core/hand-skin.ts';
 import { nailCropMasks } from '../beauty/nail-crop.ts';
 import { tattooInkProb } from '../beauty/tattoo-ink.ts';
 import { FACE_CUT, applyPose, buildWarpMesh, cutMesh, headProxy, projectMesh, rotationDeg, similarity3, type Pose3, type Vec3, type WarpMesh } from '../beauty/head-warp.ts';
@@ -971,8 +972,10 @@ function handOf(): Promise<{ p: { x: number; y: number }[]; skin: Float32Array }
         const size = (h: (typeof hands)[number]) => Math.hypot(h.p[9].x - h.p[0].x, h.p[9].y - h.p[0].y);
         const hp = hands.reduce((b, h) => (size(h) > size(b) ? h : b));
         if (size(hp) < 20) return null;
-        const skin = await photoAnalyzer.bodySkin(mc);
-        return skin ? { p: hp.p, skin } : null;
+        // 몸 분할 피부는 가까이 찍은 손등을 군데군데만 잡아(h68 평균 0.24) 손등 타투가 점 몇 개로만 구워졌다 → 손등 피부색으로 채운다
+        const body = await photoAnalyzer.bodySkin(mc);
+        const skin = handBackSkin({ data: mc.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, mc.width, mc.height).data, width: mc.width, height: mc.height }, hp.p, body);
+        return { p: hp.p, skin };
       })().catch(() => null),
     };
   }
