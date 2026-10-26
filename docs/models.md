@@ -55,11 +55,11 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 
 **쓰는 곳**: 손톱이 보이는 손가락(손등 쪽, `nailQuads` vis > 0.3)만, 마스크 넓이가 손 관절점으로 본 손톱 넓이의 0.2~8배인 것만 쓴다. 못 찾은 손가락은 SAM 으로(앱에서는 생략 가능).
 
-## 2. 타투 잉크 분할 — `tattoo-ink.onnx` (자체 학습, 학습 중)
+## 2. 타투 잉크 분할 — `tattoo-ink.onnx` (자체 학습)
 
 | 항목 | 값 |
 |---|---|
-| 파일 · 크기 | `web/public/models/tattoo-ink.onnx`(예정), 약 2MB |
+| 파일 · 크기 | `web/public/models/tattoo-ink.onnx`, 1.9MB (합성 8,000장 4 에포크, 검증 IoU 0.39. 학습을 이어 가며 나은 것으로 바꾼다) |
 | 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net |
 | 입력 | `image` float32 `[1, 3, H, W]`, RGB 0~1, **H·W 는 8의 배수면 아무 크기**(완전 합성곱) |
 | 출력 | `logit` float32 `[1, 1, H, W]` |
