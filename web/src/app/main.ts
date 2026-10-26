@@ -2213,9 +2213,12 @@ async function findRefNails(): Promise<void> {
   photoAnalyzer ??= new PhotoAnalyzer(WASM_BASE);
   const handsRef = await photoAnalyzer.handPoints(cv).catch(() => []);
   const quadsRef = handsRef.flatMap(bestQuads).filter((q) => q.vis > 0.3);
+  // SAM 특징은 한 번만(전에는 손 점·색 찾기가 따로 계산해 큰 사진은 몇 초씩 더 걸렸다)
+  let samRP: Promise<SamImage> | null = null;
+  const getSamR = (): Promise<SamImage> => (samRP ??= samImage(cv));
   if (quadsRef.length >= 2) {
     setStatus('고른 사진에서 손톱을 찾는 중…');
-    const samR = await samImage(cv);
+    const samR = await getSamR();
     const got: { mask: Uint8Array; frame: NailFrame }[] = [];
     for (const q of quadsRef) {
       const r = await samR.segment(q.c.x, q.c.y);
@@ -2244,13 +2247,13 @@ async function findRefNails(): Promise<void> {
       return;
     }
     if (got.length >= 2) {
-      const byColor = await nailsByColor(rgba, w, h, () => samImage(cv), '고른 사진에서 손톱을 찾는 중…');
+      const byColor = await nailsByColor(rgba, w, h, getSamR, '고른 사진에서 손톱을 찾는 중…');
       refNails = { src, rgba, w, h, nails: rankNails(rgba, w, h, byColor.length > got.length ? byColor : got) };
       return;
     }
   }
   // ② 손 점이 없으면(손톱만 가까이 찍힌 사진 등) 색 덩어리로
-  const best = await nailsByColor(rgba, w, h, () => samImage(cv), '고른 사진에서 손톱을 찾는 중…');
+  const best = await nailsByColor(rgba, w, h, getSamR, '고른 사진에서 손톱을 찾는 중…');
   // 스타일 AI가 읽은 네일 색(연핑크 등)과 색도가 크게 다르면 손가락 사이 그늘·배경(흰 털옷 조각)을 잡은 것: 버리고 그 색의 가상 손톱으로
   if (best.length && nailLabelColor) {
     const lab = new Float32Array(3), lab2 = new Float32Array(3);
