@@ -1775,14 +1775,25 @@ function mySamImage(): Promise<SamImage> {
  * 손 전체가 잡혔다. 마스크는 원래 사진 크기로 되돌려 준다
  */
 async function handSamImage(hp: { p: { x: number; y: number }[] }): Promise<SamImage> {
-  const src = stillCanvas();
-  const W = src.width, H = src.height;
   const xs = hp.p.map((q) => q.x), ys = hp.p.map((q) => q.y);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const size = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1.6 + 8;
+  return boxSamImage(cx, cy, size, 512);
+}
+/**
+ * 손가락 끝 하나 둘레만 잘라 SAM 입력 크기(1024)로 키워 오린다. 손을 펴고 위에서 찍은 사진의 짧은 맨손톱은 사진 전체로는
+ * 마스크 칸 8개 남짓이라 SAM 이 손톱 대신 손가락 끝마디·손 전체를 잡았다(손 사진 5장에서 손톱 1~3개, 손가락 마디째 칠함)
+ */
+function tipSamImage(c: { x: number; y: number }, side: number): Promise<SamImage> {
+  return boxSamImage(c.x, c.y, side, 1024);
+}
+/** (cx, cy) 둘레 side 크기 상자를 긴 변 target 으로 키워 SAM 을 돌리고, 마스크는 원래 사진 크기로 되돌려 준다 */
+async function boxSamImage(cx: number, cy: number, size: number, target: number): Promise<SamImage> {
+  const src = stillCanvas();
+  const W = src.width, H = src.height;
   const bx = Math.max(0, Math.floor(cx - size / 2)), by = Math.max(0, Math.floor(cy - size / 2));
   const bw = Math.min(W, Math.ceil(cx + size / 2)) - bx, bh = Math.min(H, Math.ceil(cy + size / 2)) - by;
-  const k = 512 / Math.max(bw, bh);
+  const k = target / Math.max(bw, bh);
   const c = document.createElement('canvas');
   c.width = Math.round(bw * k);
   c.height = Math.round(bh * k);
@@ -2328,7 +2339,8 @@ async function ensureNailsOnce(): Promise<void> {
       const small = hs < Math.min(st.w, st.h) * 0.15;
       const hsam = small ? await handSamImage(hp) : sam;
       for (const q of bestQuads(hp).filter((x) => x.vis > 0.3)) {
-        await addMyNail(hsam, q.c.x, q.c.y, q.dir, true, { c: q.c, size: Math.max(q.len, q.width, hs * 0.18), maxExt: small ? 2.5 : 5 });
+        const size = Math.max(q.len, q.width, hs * 0.18);
+        await addMyNail(hsam, q.c.x, q.c.y, q.dir, true, { c: q.c, size, maxExt: small ? 2.5 : 5, est: q.len * q.width, retry: small ? undefined : () => tipSamImage(q.c, size * 4) });
       }
     }
   }
@@ -2557,15 +2569,19 @@ async function moreNailsLikeMine(hands: { p: { x: number; y: number }[] }[]): Pr
     }
   }
 }
-async function addMyNail(
-  sam: SamImage, x: number, y: number, hint: { x: number; y: number } | null, quiet = false,
-  expect: { c: { x: number; y: number }; size: number; maxExt?: number } | null = null,
-): Promise<boolean> {
-  const base = stillRGBA();
-  const r = await sam.segment(x, y);
+function maskArea(m: Uint8Array): number {
+  let a = 0;
+  for (let i = 0; i < m.length; i++) a += m[i];
+  return a;
+}
+/** 손톱 하나로 쓰기에 나쁜 마스크인가 */
+function judgeNail(
+  mask: Uint8Array, score: number, base: { rgba: Uint8ClampedArray; w: number; h: number },
+  expect: { c: { x: number; y: number }; size: number; maxExt?: number } | null,
+): boolean {
   let area = 0, sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (let i = 0; i < r.mask.length; i++) {
-    if (!r.mask[i]) continue;
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
     area++;
     const px = i % base.w, py = (i - px) / base.w;
     sx += px; sy += py;
@@ -2576,15 +2592,50 @@ async function addMyNail(
   // 전신 사진의 손톱(30픽셀 남짓)이 모두 버려졌다
   const smallHand = !!expect && (expect.maxExt ?? 5) < 5;
   const minA = smallHand ? Math.max(8, expect!.size * expect!.size * 0.15) : base.w * base.h * 0.0003;
-  let bad = r.score < 0.5 || area < minA || area > base.w * base.h * 0.03;
+  let bad = score < 0.5 || area < minA || area > base.w * base.h * 0.03;
   if (!bad && expect) {
     const ext = Math.max(x1 - x0, y1 - y0);
     const cd = Math.hypot(sx / area - expect.c.x, sy / area - expect.c.y);
     // 손 점의 손톱 크기는 손가락 끝마디 기준이라 긴 네일보다 작다(실제 손톱은 2~4배): 손가락·손 전체(7배 넘게)만 거른다
     bad = ext > expect.size * (expect.maxExt ?? 5) || area > expect.size * expect.size * 8 || cd > expect.size * 2.5;
     // 둘레 손가락 피부와 색이 거의 같으면 손톱이 아니라 손가락을 잡은 것
-    const ctr = bad ? -1 : maskContrast(base.rgba, base.w, base.h, r.mask);
+    const ctr = bad ? -1 : maskContrast(base.rgba, base.w, base.h, mask);
     if (!bad && ctr < 4) bad = true;
+  }
+  return bad;
+}
+async function addMyNail(
+  sam: SamImage, x: number, y: number, hint: { x: number; y: number } | null, quiet = false,
+  expect: { c: { x: number; y: number }; size: number; maxExt?: number; est?: number; retry?: () => Promise<SamImage> } | null = null,
+): Promise<boolean> {
+  const base = stillRGBA();
+  let r = await sam.segment(x, y);
+  let bad = judgeNail(r.mask, r.score, base, expect);
+  // 사진 전체 SAM 이 못 잡았거나 손 점으로 본 손톱 넓이(est)의 3배 넘게 잡았으면(손가락 끝마디째) 손가락 끝 둘레를 키워 다시 오린다
+  if (expect?.retry && expect.est && (bad || maskArea(r.mask) > expect.est * 3)) {
+    // 잘라 키운 그림에서는 손가락 끝 점과 손가락 방향 앞뒤(손톱 길이의 1/4) 세 점을 찍고, 세 후보 중 손톱 모양으로
+    // 쓸 만한 가장 작은 것(손 점 손톱 넓이의 30% 넘게: 반사광 조각 제외). 맨손톱은 가장 확신한 후보가 손가락 끝마디일 때가 많다
+    const tip = await expect.retry();
+    const L = Math.sqrt(expect.est);
+    const pts: [number, number][] = [[x, y]];
+    if (hint) for (const t of [0.25, -0.25]) pts.push([x + hint.x * t * L, y + hint.y * t * L]);
+    let pick: { mask: Uint8Array; score: number; a: number } | null = null;
+    for (const [px, py] of pts) {
+      const r2 = await tip.segment(px, py);
+      for (const c of [{ mask: r2.mask, score: r2.score }, ...r2.alts]) {
+        if (c.score < 0.5) continue;
+        const a = maskArea(c.mask);
+        if (a < expect.est * 0.3 || (pick && a >= pick.a) || judgeNail(c.mask, c.score, base, expect)) continue;
+        pick = { mask: c.mask, score: c.score, a };
+      }
+    }
+    if (pick) {
+      r = { mask: pick.mask, score: pick.score, alts: [] };
+      bad = false;
+    } else if (maskArea(r.mask) > expect.est * 4) {
+      // 다시 오려도 손톱이 안 나오고 처음 것이 손 점 손톱의 4배 넘으면 손가락 끝마디째 잡은 것(그대로 두면 마디 전체가 칠해졌다)
+      bad = true;
+    }
   }
   if (bad) {
     if (!quiet) setStatus('손톱을 찾지 못했어요. 손톱 가운데를 눌러 주세요');
