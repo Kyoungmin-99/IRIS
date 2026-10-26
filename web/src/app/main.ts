@@ -42,6 +42,7 @@ import { denseSleeve, extractDesign, findInk, isDesignSheet, sheetRect, sleeveIn
 import { affine3, armStrip, chestInkScale, inkOnArm, limbRegion, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, transferTorsoInk, type Arm, type InkMap, type Strip } from '../beauty/still-tattoo.ts';
 import { nailQuads } from '../beauty/nail-place.ts';
 import { nailCropMasks } from '../beauty/nail-crop.ts';
+import { tattooInkProb } from '../beauty/tattoo-ink.ts';
 import { FACE_CUT, applyPose, buildWarpMesh, cutMesh, headProxy, projectMesh, rotationDeg, similarity3, type Pose3, type Vec3, type WarpMesh } from '../beauty/head-warp.ts';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -457,7 +458,10 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
     // (분석한 그림 기준 좌표이므로 ✂️ 영역으로 자른 경우에도 그 그림에서 다시 뽑는다)
     if (PHOTO_MODE && r.tattooSrc) {
       const hi = upscaleInkSource(r.tattooSrc.src, source, 1600);
-      if (hi.scale > 1) {
+      // 타투 잉크 모델(자체 학습): 잉크 확률을 함께 넘겨 밝기 대비 규칙이 놓친 잉크(분할이 옷으로 읽은 맨살 위)를 더하고 주름·그늘을 뺀다.
+      // 모델을 못 불러오면 규칙만
+      hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, 1024).catch(() => undefined);
+      if (hi.scale > 1 || hi.src.inkProb) {
         const rc = r.tattooSrc.rect;
         const t = tattooFromSource(hi.src, { x: rc.x * hi.scale, y: rc.y * hi.scale, w: rc.w * hi.scale, h: rc.h * hi.scale }, 1600);
         if (t) {

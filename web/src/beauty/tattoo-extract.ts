@@ -19,6 +19,8 @@ export interface InkSource {
   skin: Float32Array;
   /** 피부가 아닐 확률이 높은 곳(머리카락·옷 등, 0~1, w×h). 없으면 0 */
   avoid?: Float32Array;
+  /** 타투 잉크 모델(tattoo-ink.ts)의 잉크 확률(0~1, w×h). 없으면 밝기 대비 규칙만 */
+  inkProb?: Float32Array;
 }
 
 export interface Rect {
@@ -132,6 +134,12 @@ export function findInk(src: InkSource): { ink: Uint8Array; skin: Uint8Array; L:
   const darkAbs = sl.length > 50 ? sl[sl.length >> 1] * 0.45 : -1;
   const ink = new Uint8Array(n);
   for (let i = 0; i < n; i++) ink[i] = skin[i] && (local[i] - L[i] > 0.1 || L[i] < darkAbs) ? 1 : 0;
+  // 잉크 모델이 확실히 잉크라고 본 곳은 피부 가장자리·분할이 옷으로 잘못 읽은 맨살이어도 잉크(둘레에 피부가 조금이라도 있으면)
+  const P = src.inkProb;
+  if (P) {
+    const near = boxBlur(skinRaw, w, h, Math.max(2, short * 0.03));
+    for (let i = 0; i < n; i++) if (!ink[i] && P[i] > 0.6 && (near[i] > 0.15 || src.skin[i] > 0.3)) ink[i] = 1;
+  }
   // 작은 점 잡음, 새까맣고 큰 덩어리(끈·머리카락) 제거
   const { lab, n: nc } = label(ink, w, h);
   const area = new Int32Array(nc + 1);
@@ -159,6 +167,15 @@ export function findInk(src: InkSource): { ink: Uint8Array; skin: Uint8Array; L:
     if (x === 0 || y === 0 || x === w - 1 || y === h - 1) border[c] = 1;
   }
   const drop = new Set<number>();
+  // 잉크 모델 확률의 덩어리 평균: 아주 낮으면(주름·그늘·털) 잉크에서 뺀다, 높으면 몸 윤곽선으로 보지 않는다
+  const meanP = new Float32Array(nc + 1);
+  if (P) {
+    for (let i = 0; i < n; i++) if (lab[i]) meanP[lab[i]] += P[i];
+    for (let c = 1; c <= nc; c++) {
+      meanP[c] /= Math.max(1, area[c]);
+      if (meanP[c] < 0.06) drop.add(c);
+    }
+  }
   for (const [c, ls] of darkOf) {
     ls.sort((a, b) => a - b);
     if (ls[Math.floor(ls.length * 0.2)] < 0.14 && (edgeN[c] > area[c] * 0.15 || border[c])) drop.add(c);
@@ -200,7 +217,7 @@ export function findInk(src: InkSource): { ink: Uint8Array; skin: Uint8Array; L:
   for (let c = 1; c <= nc; c++) {
     if (area[c] < 4 || rim[c] <= area[c] * 0.8) continue;
     // 'Inner Peace' 의 'ner' 가 팔 위쪽을 옷으로 잘못 읽은 경계 곁이라 윤곽선으로 빠졌다
-    if (outsideLikeSkin(c)) continue;
+    if (outsideLikeSkin(c) || (P && meanP[c] > 0.5)) continue;
     const diag = Math.hypot(bx1[c] - bx0[c] + 1, by1[c] - by0[c] + 1);
     // 거의 다(95%) 가장자리 띠에 있고 아주 길쭉하면(대각선 / √넓이 6 넘게, 실제 10.5) 부드러운 그늘 윤곽선이라 굵기 기준을 두 배로:
     // 베이지 벽 앞 손목 사진의 팔 윤곽 그늘(평균 굵기 5.7, 기준 5.69)이 남아 그것이 도안으로 뽑혔다(무한대 타투 대신 긴 사선)
@@ -546,7 +563,7 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
         const dark = smooth(0.06, 0.3, 1 - lumT);
         const tint = smooth(0.08, 0.22, Math.max(Math.abs(T[0] - lumT), Math.abs(T[1] - lumT), Math.abs(T[2] - lumT)));
         // 피부가 아닌 곳(옷·머리카락·배경)은 도안이 아니다
-        const onSkin = src.avoid ? 1 - smooth(0.3, 0.6, src.avoid[i]) : 1;
+        const onSkin = Math.max(src.avoid ? 1 - smooth(0.3, 0.6, src.avoid[i]) : 1, src.inkProb ? smooth(0.4, 0.7, src.inkProb[i]) : 0);
         const a0 = Math.max(dark, tint * 0.8) * onSkin;
         const a = gate ? a0 * smooth(0, 0.04, inkNear[i]) : a0;
         sumG += a;
