@@ -2,7 +2,7 @@
 // 사진 모드 손톱 모델 크롭(손가락 끝마디 → 128×128) 단위 테스트
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { backProject, cropFrame, pickNail, CROP } from '../src/beauty/nail-crop.ts';
+import { backProject, cropFrame, pickNail, CROP } from '../src/core/nail-crop.ts';
 
 test('크롭 틀: 손끝이 크롭 위쪽, 크기는 끝마디 길이의 2.4배', () => {
   // 손가락이 위를 가리킴(끝 y 작음)
