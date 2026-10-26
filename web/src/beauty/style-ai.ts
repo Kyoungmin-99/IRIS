@@ -1,15 +1,14 @@
 // 뷰티 스타일 AI 분류기(별도 저장소 rudals906377/AI) 불러오기.
-// 분류기 코드와 사전 계산 파일은 그 저장소의 특정 커밋에서 CDN(jsDelivr)으로 받고,
+// 분류기 코드와 사전 계산 파일은 그 저장소의 커밋 1e98992 를 public/style-ai 에 그대로 복사해 같은 사이트에서 받고
+// (AI 저장소가 비공개로 바뀌어 jsDelivr 가 404 를 돌려 스타일 AI 가 통째로 꺼졌었다),
 // 비전 모델(약 94MB)은 Transformers.js가 Hugging Face에서 받아 브라우저 캐시에 둔다.
 // 사진은 기기 밖으로 나가지 않는다(모델 파일만 내려받는다).
 // index.html의 importmap이 '@huggingface/transformers'를 CDN 주소로 연결해야 한다.
 
 import type { StyleAIResult } from './style-attributes.ts';
 
-/** 분류기 저장소의 커밋(PR #1 시점). 저장소가 합쳐지면 main의 커밋으로 바꾼다 */
-const AI_REPO = 'rudals906377/AI';
-const AI_COMMIT = '1e98992';
-const AI_BASE = `https://cdn.jsdelivr.net/gh/${AI_REPO}@${AI_COMMIT}`;
+/** 분류기 파일 위치(사이트 안). 원본: rudals906377/AI 커밋 1e98992 의 analyzer.js·taxonomy.js·encoders.js·describe.js·embeddings·heads */
+const AI_DIR = 'style-ai';
 const MODEL = 'Marqo/marqo-fashionSigLIP';
 
 interface Analyzer {
@@ -28,6 +27,7 @@ export interface AIProgress {
 /** 분류기를 (한 번만) 불러온다. onProgress로 내려받기 진행률을 알린다. */
 export function loadStyleAI(onProgress?: (p: AIProgress) => void): Promise<Analyzer> {
   loading ??= (async () => {
+    const AI_BASE = new URL(AI_DIR, document.baseURI).href;
     const [mod, labelEmbeddings, heads] = await Promise.all([
       import(/* @vite-ignore */ `${AI_BASE}/analyzer.js`) as Promise<{ createAnalyzer: (o: Record<string, unknown>) => Promise<Analyzer> }>,
       fetch(`${AI_BASE}/embeddings/marqo-fashionSigLIP.json`).then((r) => (r.ok ? r.json() : undefined)),
