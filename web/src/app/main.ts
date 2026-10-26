@@ -41,6 +41,7 @@ import { transferMakeup, type MakeupAmounts } from '../beauty/still-makeup.ts';
 import { denseSleeve, extractDesign, findInk, isDesignSheet, sheetRect, sleeveInk, type InkSource, neutralInk } from '../beauty/tattoo-extract.ts';
 import { affine3, armStrip, chestInkScale, inkOnArm, limbRegion, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, transferTorsoInk, type Arm, type InkMap, type Strip } from '../beauty/still-tattoo.ts';
 import { nailQuads } from '../beauty/nail-place.ts';
+import { nailCropMasks } from '../beauty/nail-crop.ts';
 import { FACE_CUT, applyPose, buildWarpMesh, cutMesh, headProxy, projectMesh, rotationDeg, similarity3, type Pose3, type Vec3, type WarpMesh } from '../beauty/head-warp.ts';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -951,20 +952,102 @@ function myBodyOf(): Promise<{ pose: { p: { x: number; y: number }[]; vis: numbe
   }
   return myBody.p;
 }
+/** 손만 찍은 사진의 가장 큰 손(관절점)과 몸 분할 피부(관절점 없이도 나온다) */
+let myHand: { mine: ImageBitmap; p: Promise<{ p: { x: number; y: number }[]; skin: Float32Array } | null> } | null = null;
+function handOf(): Promise<{ p: { x: number; y: number }[]; skin: Float32Array } | null> {
+  const mine = photoOriginal!;
+  if (myHand?.mine !== mine) {
+    myHand = {
+      mine,
+      p: (async () => {
+        photoAnalyzer ??= new PhotoAnalyzer(WASM_BASE);
+        const mc = stillCanvas();
+        const hands = await photoAnalyzer.handPoints(mc);
+        if (!hands.length) return null;
+        const size = (h: (typeof hands)[number]) => Math.hypot(h.p[9].x - h.p[0].x, h.p[9].y - h.p[0].y);
+        const hp = hands.reduce((b, h) => (size(h) > size(b) ? h : b));
+        if (size(hp) < 20) return null;
+        const skin = await photoAnalyzer.bodySkin(mc);
+        return skin ? { p: hp.p, skin } : null;
+      })().catch(() => null),
+    };
+  }
+  return myHand.p;
+}
+/**
+ * 손만 찍은 사진: 도안(잉크가 있는 부분만)을 손등에 평평하게 바로 세워 놓는다(위 = 손가락 쪽, 고른 사진에서 보이던 방향 그대로).
+ * 가운데는 손목 → 가운뎃손가락 뿌리의 절반, 세로는 그 길이의 25~85%, 가로는 손등 폭(검지 뿌리 ↔ 새끼 뿌리)의 90% 까지.
+ * 팔처럼 원기둥으로 감으면 글씨가 뒤집혀 두 조각이 됐다
+ */
+function handPlacePlan(ink: InkMap, hand: { p: { x: number; y: number }[]; skin: Float32Array }): TatPlan | null {
+  // 잉크가 있는 칸만(팔 대 팔용 잉크는 팔 상자 전체라 도안이 그 안에 작게 있다). 잉크 양의 1~99% 범위:
+  // 끝에서 끝까지 잡으면 멀리 떨어진 작은 잉크 점까지 들어가 도안이 손톱만 하게 줄었다(매듭·하트·나침반)
+  const colM = new Float64Array(ink.w), rowM = new Float64Array(ink.h);
+  let tot = 0;
+  for (let y = 0; y < ink.h; y++) for (let x = 0; x < ink.w; x++) {
+    const a = ink.rgba[(y * ink.w + x) * 4 + 3];
+    if (a <= 20) continue;
+    colM[x] += a; rowM[y] += a; tot += a;
+  }
+  if (!tot) return null;
+  const q = (m: Float64Array, f: number): number => {
+    let acc = 0;
+    for (let i = 0; i < m.length; i++) if ((acc += m[i]) >= tot * f) return i;
+    return m.length - 1;
+  };
+  const bx0 = q(colM, 0.01), bx1 = q(colM, 0.99), by0 = q(rowM, 0.01), by1 = q(rowM, 0.99);
+  const kx = ink.rect.w / ink.w, ky = ink.rect.h / ink.h;
+  const tx = ink.rect.x + bx0 * kx, ty = ink.rect.y + by0 * ky, tw = (bx1 - bx0 + 1) * kx, th = (by1 - by0 + 1) * ky;
+  const P = hand.p, L = Math.hypot(P[9].x - P[0].x, P[9].y - P[0].y);
+  const up = { x: (P[9].x - P[0].x) / L, y: (P[9].y - P[0].y) / L };
+  const down = { x: -up.x, y: -up.y }, right = { x: -up.y, y: up.x };
+  const limbW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y) * 0.9;
+  let h = L * 0.85 * (0.25 + 0.6 * tattoo.size), w = h * (tw / th);
+  if (w > limbW) { h *= limbW / w; w = limbW; }
+  const along = Math.min(0.8, Math.max(0.2, tattoo.along ?? 0.5));
+  const oc = Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)) * (limbW / 2);
+  const center = { x: P[0].x + up.x * L * along + right.x * oc, y: P[0].y + up.y * L * along + right.y * oc };
+  // 내 사진 px → 고른 사진(잉크 좌표) px
+  const sx = tw / w, sy = th / h, cx = tx + tw / 2, cy = ty + th / 2;
+  const toRef = [right.x * sx, right.y * sx, cx - (center.x * right.x + center.y * right.y) * sx, down.x * sy, down.y * sy, cy - (center.x * down.x + center.y * down.y) * sy];
+  const det = toRef[0] * toRef[4] - toRef[1] * toRef[3];
+  if (Math.abs(det) < 1e-9) return null;
+  const fromRef = [toRef[4] / det, -toRef[1] / det, (toRef[1] * toRef[5] - toRef[2] * toRef[4]) / det, -toRef[3] / det, toRef[0] / det, (toRef[2] * toRef[3] - toRef[0] * toRef[5]) / det];
+  dbgTat({ handPlace: { L, w, h, center } });
+  tatNote = '손만 나온 사진이라 타투를 손등에 미리 보여 드려요(📍 자리 고르기로 옮길 수 있어요)';
+  return { torso: { toRef, fromRef }, skin: hand.skin, ink };
+}
+function canvasInk(c: HTMLCanvasElement): InkMap {
+  return { rgba: c.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height, rect: { x: 0, y: 0, w: c.width, h: c.height } };
+}
 /** 도안을 내 팔·다리·가슴의 고른 자리(📍·크기)에 놓는 대응. 목이나 팔이 안 보이면 null */
 async function placeTattooPlan(): Promise<TatPlan | null> {
   const d = tattoo.design;
-  if (d?.canvas && tattoo.place === 'chest') return chestPlacePlan(d.canvas, d.aspect);
+  if (d?.canvas && tattoo.place === 'chest') {
+    if (!(await myBodyOf())) {
+      const hand = await handOf();
+      if (hand) return handPlacePlan(canvasInk(d.canvas), hand);
+    }
+    return chestPlacePlan(d.canvas, d.aspect);
+  }
   const m = /^(forearm|upperArm|thigh|calf)(L|R)$/.exec(tattoo.place);
   if (!d?.canvas || !m) return null;
   const body = await myBodyOf();
-  if (!body) return null;
   const legs = m[1] === 'thigh' || m[1] === 'calf';
-  const both = armsOf(body.pose, body.skin, engine.source.width, engine.source.height, legs);
-  const a = both[m[2] === 'L' ? 0 : 1];
+  // 손만 찍은 사진(손목·손등)은 몸 관절점이 없어 팔을 못 정한다: 손 관절점으로 손등에 놓는다
+  // (사용자 손 사진 5장에 팔 안쪽·손목 타투 12장을 골랐을 때 아무것도 안 그려지고 안내도 없었다)
+  const hand = !legs && (!body || !armsOf(body.pose, body.skin, engine.source.width, engine.source.height, false).some((x) => x.seen && x.vis >= 0.4)) ? await handOf() : null;
+  if (hand) return handPlacePlan(canvasInk(d.canvas), hand);
+  if (!body) {
+    tatNote = '내 사진에서 팔·다리를 찾지 못해 타투를 놓을 자리가 없어요. 📍 자리 고르기로 보이는 피부에 놓아 보세요';
+    return null;
+  }
+  const both = body ? armsOf(body.pose, body.skin, engine.source.width, engine.source.height, legs) : null;
+  const a = both?.[m[2] === 'L' ? 0 : 1];
   // 위팔·허벅지는 어깨(엉덩이)가 확실하고 그 피부가 보이면 된다: 팔꿈치가 사진 끝에 걸려 흐려도(상반신 사진) 위치는 거의 맞다
   const upper = m[1] === 'upperArm' || m[1] === 'thigh';
-  if (upper ? !(a.upSeen && a.upVis >= 0.5) && (!a.seen || a.vis < 0.4) : !a.seen || a.vis < 0.4) {
+  if (!a || !both || (upper ? !(a.upSeen && a.upVis >= 0.5) && (!a.seen || a.vis < 0.4) : !a.seen || a.vis < 0.4)) {
+    if (!a || !both) return null;
     // 아래팔·손목 자리인데 팔꿈치 아래가 사진 밖이고(상반신 사진) 위팔은 보이면: 위팔에 미리 보여 주고 알린다
     // (손목 타투를 민소매 상반신 사진에 고르면 아무것도 안 바뀌고 안내도 없었다)
     // 같은 쪽 위팔이 덜 보이면(조끼에 거의 가림) 반대쪽 위팔
@@ -988,7 +1071,7 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
   const arm = a.arm;
   const upLen = Math.hypot(arm.e.x - arm.s.x, arm.e.y - arm.s.y), loLen = Math.hypot(arm.w.x - arm.e.x, arm.w.y - arm.e.y);
   const first = m[1] === 'upperArm' || m[1] === 'thigh';
-  const skinM = legs ? legSkin(body.pose, body.skin, engine.source.width, engine.source.height) : body.skin;
+  const skinM = legs ? legSkin(body!.pose, body!.skin, engine.source.width, engine.source.height) : body!.skin;
   // 시트 전체(wrap)이고 위 마디(위팔·허벅지)도 맨살이면 긴팔 소매처럼 두 마디(어깨 조금 아래 → 손목)를 통째로 쓴다
   let full = false;
   if (tattoo.wrap) {
@@ -1408,14 +1491,20 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       tatStep('mySkin2');
       const ms = await photoAnalyzer.bodySkin(mc);
       tatStep('arm');
-      if (!mp || !ms) return null;
+      // 손만 찍은 사진: 팔 전체에서 뽑은 잉크(실시간용 도안은 십자가 가로대만 58×25 로 잡히기도 했다)를 손등에
+      const onHand = async (): Promise<TatPlan | null> => {
+        if (legs || !ink.w) return null;
+        const hand = await handOf();
+        return hand ? handPlacePlan(ink, hand) : null;
+      };
+      if (!mp || !ms) return onHand();
       const mArms = armsOf(mp, ms, mc.width, mc.height, legs);
       const ok = (a: (typeof mArms)[number]) => a.seen && a.vis > 0.4;
       if (strip) side = mArms[0].vis >= mArms[1].vis ? 0 : 1;
       // 같은 쪽 팔이 보이면 그 팔, 아니면 반대쪽 팔(글씨가 뒤집히지 않게 거울로 뒤집지는 않는다)
       const mine2 = ok(mArms[side]) ? side : ok(mArms[1 - side]) ? 1 - side : -1;
       dbgTat({ mArms: mArms.map((a) => ({ ...a.arm, vis: a.vis, seen: a.seen })), mine2, poseOk });
-      if (mine2 < 0) return null;
+      if (mine2 < 0) return onHand();
       const dst = mArms[mine2].arm;
       const dSkin = legs ? legSkin(mp, ms, mc.width, mc.height) : ms;
       if (!strip) return { dst, skin: dSkin, ink, src: ra!.arm };
@@ -1655,7 +1744,7 @@ async function updateStillHair(): Promise<void> {
     if (stillHairBusy === job) stillHairBusy = null;
   }
   // 몸통 타투를 반대쪽(앞/뒤) 사진에 넣으려던 경우 안내
-  if (tatOn && (placed || !plan) && tatNote) setStatus(tatNote);
+  if (tatOn && (placed || !plan || !!plan.torso) && tatNote) setStatus(tatNote);
   // 굽기 계획 없이 끝났으면(고른 사진에서 몸·팔을 못 찾음 → 실시간 타투) '보는 중' 안내를 남기지 않는다
   else if (statusEl.textContent === TAT_LOOKING) setStatus('');
 }
@@ -2328,17 +2417,38 @@ async function ensureNailsOnce(): Promise<void> {
   nailExpect = quads.length;
   if (quads.length) {
     setStatus('손톱을 찾는 중…');
-    const sam = await mySamImage();
+    const st = stillRGBA();
+    // 손톱 전용 분할 모델(손가락 끝마디 크롭)을 먼저: 손톱이 보이는 손가락(vis 0.3 넘게)만, 손 점 손톱 넓이의 0.2~8배인 것
+    const done = new Set<string>();
+    const bySeg = await nailCropMasks(stillCanvas(), handsMine).catch((e) => {
+      console.warn('손톱 모델', e);
+      return [];
+    });
+    for (const n of bySeg) {
+      const q = bestQuads(handsMine[n.hand]).find((x) => x.finger === n.finger);
+      if (!q || q.vis <= 0.3) continue;
+      const a = maskArea(n.mask), est = q.len * q.width;
+      if (a < est * 0.2 || a > est * 8) continue;
+      growNailMask(n.mask, st.w, st.h, st.rgba, Math.min(4, Math.max(2, Math.round(Math.sqrt(a) * 0.08))));
+      const f = nailFrame(n.mask, st.w, st.h, n.dir, st.rgba);
+      if (!f || myNails.some((m) => overlapFrac(m.mask, n.mask) > 0.5)) continue;
+      myNails.push({ mask: n.mask, frame: f });
+      done.add(`${n.hand}:${n.finger}`);
+    }
+    console.debug('[nail] seg', bySeg.length, '→', myNails.length);
+    // 모델이 못 찾은 손가락만 SAM 으로
+    const sam = done.size < quads.length ? await mySamImage() : null;
     // 손 점으로 정한 손톱 크기(길이·폭)를 넘는 덩어리(손가락·손 전체가 잡힌 것)는 버린다
     // 손톱 크기 기준: 손가락 끝마디로 잰 값은 가까이 찍은 손에서 실제보다 훨씬 작게 나와, 손 크기(손목→가운데 손가락 뿌리)의 18%와 큰 쪽
-    const st = stillRGBA();
-    for (const hp of handsMine) {
+    for (const [hi, hp] of handsMine.entries()) {
       const hs = Math.hypot(hp.p[9].x - hp.p[0].x, hp.p[9].y - hp.p[0].y);
       // 손이 사진 짧은 변의 15% 아래면(전신 사진) 손 둘레만 잘라 키운 SAM 으로
       // (작은 손은 긴 네일이 아닌 맨 손톱이 대부분이고 손가락 옆면을 길게 잡기 쉬워 길이 기준을 2.5배로 좁힌다)
       const small = hs < Math.min(st.w, st.h) * 0.15;
-      const hsam = small ? await handSamImage(hp) : sam;
-      for (const q of bestQuads(hp).filter((x) => x.vis > 0.3)) {
+      const left = bestQuads(hp).filter((x) => x.vis > 0.3 && !done.has(`${hi}:${x.finger}`));
+      if (!left.length) continue;
+      const hsam = small ? await handSamImage(hp) : sam!;
+      for (const q of left) {
         const size = Math.max(q.len, q.width, hs * 0.18);
         await addMyNail(hsam, q.c.x, q.c.y, q.dir, true, { c: q.c, size, maxExt: small ? 2.5 : 5, est: q.len * q.width, retry: small ? undefined : () => tipSamImage(q.c, size * 4) });
       }
