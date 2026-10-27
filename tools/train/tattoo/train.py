@@ -96,7 +96,7 @@ def main() -> None:
     if a.resume:
         best = float("-inf")  # 이어서 할 때는 첫 회 결과부터 저장
     step = 0
-    t0 = time.time()
+    t0 = saved = time.time()
     for ep in range(a.epochs):
         model.train()
         tot = 0.0
@@ -116,9 +116,10 @@ def main() -> None:
             step += 1
             if step % 20 == 0:
                 print(f"  {step} 배치 ({(time.time() - t0) / step:.1f}초/배치)", flush=True)
-            if step % 100 == 0:
-                # 컨테이너가 자주 다시 시작돼 에포크(30분 넘게) 단위로만 저장하면 계속 날아갔다: 100 배치마다 가중치 저장
+            if time.time() - saved > 300:
+                # 컨테이너가 자주(40분 안팎) 다시 시작돼 에포크·100 배치 단위로 저장하면 계속 날아갔다: 5분마다 가중치 저장
                 torch.save(model.state_dict(), out / "last.pt")
+                saved = time.time()
                 print(f"  {step} 배치 저장 (손실 {tot / ((step - 1) % len(dl) + 1):.3f})", flush=True)
         model.eval()
         inter = union = 0.0
