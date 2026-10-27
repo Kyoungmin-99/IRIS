@@ -43,7 +43,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/models/nail-crop-128.onnx`, 5.3MB |
-| 출처 · 라이선스 | AI 저장소 `models/nail/nail_seg.onnx`(자체 학습). MobileNetV3-small(torchvision BSD-3 초기값) + U-Net. 학습 데이터 vpapenko/nails-segmentation-dataset(CC0-1.0) + 상업 이용 가능 자유 라이선스 손 사진 |
+| 출처 · 라이선스 | AI 저장소 손톱 분할 **r3**(`training-handoff` 가지 `data/nail_seg_r3/nail_seg_r3.onnx`, 2026-10-27 교체; 그 전은 `models/nail/nail_seg.onnx`). MobileNetV3-small(torchvision BSD-3 초기값) + U-Net. 학습 데이터 vpapenko/nails-segmentation-dataset(CC0-1.0) + 기존 수집 사진 가짜 정답 + Kaggle Nail Segmentation Dataset V2(표기 CC0, 원 출처 Roboflow 로 알려짐 — 미확인) 1,220장. AI 쪽 평가(손톱 1,819개): IoU 0.670 → 0.715, 엄지 0.49 → 0.62 |
 | 입력 | `image` float32 `[n, 3, 128, 128]`, RGB 0~1, 손가락 n 개를 한 번에 |
 | 출력 | `logit` float32 `[n, 1, 128, 128]` |
 | core | `web/src/core/nail-crop.ts` — `nailCropMasks(img, hands, runner)` |
