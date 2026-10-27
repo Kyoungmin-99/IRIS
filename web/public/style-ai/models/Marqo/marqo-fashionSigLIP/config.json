@@ -1,0 +1,9 @@
+{
+  "auto_map": {
+		"AutoConfig": "marqo_fashionSigLIP.MarqoFashionSigLIPConfig",
+		"AutoModel": "marqo_fashionSigLIP.MarqoFashionSigLIP",
+    "AutoProcessor": "marqo_fashionSigLIP.MarqoFashionSigLIPProcessor"
+	},
+  "open_clip_model_name": "hf-hub:Marqo/marqo-fashionSigLIP",
+  "model_type": "siglip"
+}

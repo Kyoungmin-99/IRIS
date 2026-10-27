@@ -1,13 +1,15 @@
 // 뷰티 스타일 AI 분류기(별도 저장소 rudals906377/AI) 불러오기.
-// 분류기 코드와 사전 계산 파일은 그 저장소의 커밋 1e98992 를 public/style-ai 에 그대로 복사해 같은 사이트에서 받고
-// (AI 저장소가 비공개로 바뀌어 jsDelivr 가 404 를 돌려 스타일 AI 가 통째로 꺼졌었다),
-// 비전 모델(약 94MB)은 Transformers.js가 Hugging Face에서 받아 브라우저 캐시에 둔다.
+// AI 채팅이 FINDE-photos shared/models/style-r8 로 넘겨준 휴대폰용 r8 묶음(코드: AI 커밋 6d40a0a)을 public/style-ai 에 그대로 두고
+// 같은 사이트에서 받는다(AI 저장소가 비공개라 jsDelivr 는 404).
+// r8 의 헤드·kNN·모티브는 r8 에서 미세 조정한 비전 인코더의 임베딩 공간에서 학습됐다 → 인코더도 r8 것(public/style-ai/models, q8 94MB)을
+// 써야 한다. Hugging Face 원본 인코더와 섞으면 오류 없이 결과만 틀린다(AI 채팅 안내). 한국 평가 433장 75.8 → 86.5점.
+// 권리: AI 채팅 표기 '학습 전용·비상업, 권리 미정리'(사용자가 테스트 사이트 공개를 결정, 상업 출시 전 정리 필요).
 // 사진은 기기 밖으로 나가지 않는다(모델 파일만 내려받는다).
 // index.html의 importmap이 '@huggingface/transformers'를 CDN 주소로 연결해야 한다.
 
 import type { StyleAIResult } from './style-attributes.ts';
 
-/** 분류기 파일 위치(사이트 안). 원본: rudals906377/AI 커밋 1e98992 의 analyzer.js·taxonomy.js·encoders.js·describe.js·embeddings·heads */
+/** 분류기 파일 위치(사이트 안). 원본: FINDE-photos shared/models/style-r8 (code/web · embeddings · heads · Marqo 인코더) */
 const AI_DIR = 'style-ai';
 const MODEL = 'Marqo/marqo-fashionSigLIP';
 
@@ -28,12 +30,23 @@ export interface AIProgress {
 export function loadStyleAI(onProgress?: (p: AIProgress) => void): Promise<Analyzer> {
   loading ??= (async () => {
     const AI_BASE = new URL(AI_DIR, document.baseURI).href;
-    const [mod, labelEmbeddings, heads] = await Promise.all([
+    // 인코더는 사이트 안 r8 파일에서(로컬 먼저, 없는 모델(SAM 등)은 그대로 Hugging Face 에서)
+    const tfId = '@huggingface/transformers';
+    const tf = (await import(/* @vite-ignore */ tfId)) as { env: { allowLocalModels: boolean; localModelPath: string } };
+    tf.env.allowLocalModels = true;
+    tf.env.localModelPath = `${AI_BASE}/models/`;
+    const json = (p: string) => fetch(`${AI_BASE}/${p}`).then((r) => (r.ok ? r.json() : undefined));
+    const [mod, labelEmbeddings, heads, motifs] = await Promise.all([
       import(/* @vite-ignore */ `${AI_BASE}/analyzer.js`) as Promise<{ createAnalyzer: (o: Record<string, unknown>) => Promise<Analyzer> }>,
-      fetch(`${AI_BASE}/embeddings/marqo-fashionSigLIP.json`).then((r) => (r.ok ? r.json() : undefined)),
-      fetch(`${AI_BASE}/heads/marqo-fashionSigLIP.json`).then((r) => (r.ok ? r.json() : undefined)),
+      json('embeddings/marqo-fashionSigLIP.json'),
+      json('heads/marqo-fashionSigLIP.json'),
+      json('embeddings/motifs-marqo-fashionSigLIP.json'),
     ]);
-    return mod.createAnalyzer({ model: MODEL, labelEmbeddings, heads, onProgress });
+    // 휴대폰 설정(AI 앱과 같게): q8 하나, 추론 뒤 작업 메모리를 바로 돌려준다
+    return mod.createAnalyzer({
+      model: MODEL, dtype: 'q8', device: 'wasm', labelEmbeddings, heads, motifs, onProgress,
+      sessionOptions: { enableCpuMemArena: false, enableMemPattern: false },
+    });
   })();
   loading.catch(() => {
     loading = null;

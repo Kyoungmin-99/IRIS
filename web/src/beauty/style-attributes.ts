@@ -178,12 +178,15 @@ export function hintsFromStyleAI(r: StyleAIResult): StyleHints {
     } else if (cat === 'tattoo') {
       const t: TattooHints = {};
       const place = get('placement');
+      // r8 라벨(6d40a0a): '손가락' → '손·손가락', '어깨' → '어깨·위팔', '발목' → '발목·발등' 로 바뀌고 흉골·날개뼈·척추 등이 생김. 옛 이름도 둔다
       const pm: Record<string, TattooPlace> = {
         손목: 'forearmL',
         손가락: 'forearmL',
+        '손·손가락': 'forearmL',
         팔안쪽: 'forearmL',
         팔뚝: 'upperArmL',
         어깨: 'upperArmL',
+        '어깨·위팔': 'upperArmL',
         쇄골: 'chest',
         '목·귀뒤': 'neckL',
       };
@@ -192,7 +195,7 @@ export function hintsFromStyleAI(r: StyleAIResult): StyleHints {
       else if (place && /종아리|정강이|발목|다리/.test(place)) t.place = 'calfL';
       // 몸통(옆구리·갈비뼈·등·가슴·배·허리): 몸통 자리는 하나(chest)뿐이라 그리로. 매기지 않으면 기본 자리(아래팔)로 남아
       // 관절점을 못 찾은 옆구리 사진의 몸통이 '팔'로 읽혀 도안이 아래팔에 조각나 늘어났다
-      else if (place && /옆구리|갈비|등|가슴|배|허리|복부/.test(place)) t.place = 'chest';
+      else if (place && /옆구리|갈비|등|가슴|배|허리|복부|흉골|날개뼈|척추|골반/.test(place)) t.place = 'chest';
       const size = get('size');
       if (size === '미니') t.size = 0.15;
       else if (size === '스몰') t.size = 0.3;
@@ -201,7 +204,7 @@ export function hintsFromStyleAI(r: StyleAIResult): StyleHints {
       const col = get('color');
       if (col === '블랙') t.color = 'black';
       else if (col === '블랙앤그레이') t.color = 'grey';
-      else if (col === '풀컬러' || col === '포인트컬러') t.color = 'color';
+      else if (col === '풀컬러' || col === '포인트컬러' || col === '레드' || col === '파스텔' || col === '화이트 잉크') t.color = 'color';
       const st = get('style');
       if (st) t.styleLabel = st;
       out.tattoo = t;

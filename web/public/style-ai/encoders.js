@@ -13,11 +13,12 @@ import {
 
 export const familyOf = (model) => (/siglip/i.test(model) ? 'siglip' : 'clip');
 
-export async function loadVisionEncoder(model, { device, dtype, progress_callback } = {}) {
+export async function loadVisionEncoder(model, { device, dtype, progress_callback, session_options } = {}) {
   const fam = familyOf(model);
   const opts = { progress_callback };
   if (device) opts.device = device;
   if (dtype) opts.dtype = dtype;
+  if (session_options) opts.session_options = session_options;   // 예: { enableCpuMemArena: false } — 휴대폰에서 추론 뒤 작업 메모리를 바로 돌려준다
   const Vision = fam === 'siglip' ? SiglipVisionModel : CLIPVisionModelWithProjection;
   const [processor, vision] = await Promise.all([
     AutoProcessor.from_pretrained(model, { progress_callback }),

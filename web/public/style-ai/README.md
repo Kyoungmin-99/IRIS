@@ -1,9 +1,12 @@
-# 스타일 AI 분류기 파일 (복사본)
+# 스타일 AI 분류기 r8 (휴대폰용 marqo-fashionSigLIP)
 
-`rudals906377/AI` 저장소 커밋 `1e98992` 의 파일을 그대로 복사했다(같은 사용자의 저장소, MIT).
+AI 채팅이 FINDE-photos `shared/models/style-r8` 로 넘겨준 묶음을 그대로 둔다(2026-10-27).
 
-- `analyzer.js`, `taxonomy.js`, `encoders.js`, `describe.js` — 분류기 코드(`@huggingface/transformers` 는 index.html importmap 이 CDN 으로 연결)
-- `embeddings/marqo-fashionSigLIP.json`, `heads/marqo-fashionSigLIP.json` — 미리 계산한 라벨 임베딩·분류 헤드
-
-AI 저장소가 비공개로 바뀌어 jsDelivr(`cdn.jsdelivr.net/gh/...`)가 404 를 돌려주게 되어, 사이트 안에서 받도록 옮겼다.
-비전 모델(Marqo/marqo-fashionSigLIP, 약 94MB)은 그대로 Hugging Face 에서 받는다. 분류기를 바꿀 때는 AI 저장소의 새 커밋에서 이 파일들을 함께 다시 복사한다.
+- `analyzer.js taxonomy.js encoders.js describe.js trends.js motif.js motifs.js` — AI 저장소 커밋 6d40a0a 의 웹 코드. **taxonomy.js 를 고치지 말 것**(헤드 해시 b866f542 와 맞아야 학습 헤드를 쓴다).
+- `heads/marqo-fashionSigLIP.json` — r8 학습 헤드·보정 온도·kNN·부위 헤드(6.7MB).
+- `embeddings/marqo-fashionSigLIP.json` — 라벨 문장 임베딩, `embeddings/motifs-marqo-fashionSigLIP.json` — 타투 세부 모티브.
+- `models/Marqo/marqo-fashionSigLIP/` — **r8 비전 인코더**(q8, 94,008,252 bytes, sha256 f907c69e…)와 설정 2개. 헤드와 한 쌍이라 Hugging Face 원본 인코더와 섞으면 결과가 조용히 틀린다.
+  `web/src/beauty/style-ai.ts` 가 Transformers.js `env.localModelPath` 를 이 폴더로 둬 사이트 안에서 받는다.
+- 점수(한국 평가 433장): 원본 인코더 + 옛 헤드 75.8 → r8 86.5 (헤어 86.6 · 네일 90.6 · 메이크업 81.5 · 타투 83.4).
+- **권리**: AI 채팅 표기 `commercialStatus: not-cleared` — 학습 전용·비상업(CC BY-NC/ND 사진, 출처 기록 없는 코덱스 수집 사진으로 학습). 사용자가 테스트 사이트 공개를 결정(2026-10-27). 상업 출시 전에 권리 정리가 필요하다.
+- 라벨 합치기(r8): `매직 스트레이트`→`생머리`, `언더컷`→`투블럭컷`(헤드에서 옛 라벨은 거의 1위가 안 됨).
