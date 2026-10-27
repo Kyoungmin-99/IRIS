@@ -146,6 +146,9 @@ def main() -> None:
     print(f"배경 {len(bgs)}장, 도안 {len(designs)}장", flush=True)
     labels = open(out / "labels.jsonl", "a", encoding="utf-8")
     k = len(list((out / "images").glob("*.jpg")))
+    if k:  # 이어 만들기: 난수를 다르게(앞에 만든 것과 겹치지 않게)
+        random.seed(a.seed + k)
+        np.random.seed(a.seed + k)
     tries = 0
     while k < a.n and tries < a.n * 30:
         tries += 1
