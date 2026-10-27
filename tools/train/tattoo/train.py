@@ -99,8 +99,8 @@ def main() -> None:
             sched.step()
             tot += loss.item()
             step += 1
-            if step % 200 == 0:
-                # 컨테이너가 자주 다시 시작돼 에포크(30분 넘게) 단위로만 저장하면 계속 날아갔다: 200 배치마다 가중치 저장
+            if step % 100 == 0:
+                # 컨테이너가 자주 다시 시작돼 에포크(30분 넘게) 단위로만 저장하면 계속 날아갔다: 100 배치마다 가중치 저장
                 torch.save(model.state_dict(), out / "last.pt")
                 print(f"  {step} 배치 저장 (손실 {tot / ((step - 1) % len(dl) + 1):.3f})", flush=True)
         model.eval()
