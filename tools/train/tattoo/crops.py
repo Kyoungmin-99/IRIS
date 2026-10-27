@@ -55,8 +55,8 @@ def main() -> None:
             W, H = max(S, int(im.width * s)), max(S, int(im.height * s))
             ims, inks, ws = im.resize((W, H), Image.BILINEAR), ink.resize((W, H), Image.BILINEAR), wgt.resize((W, H), Image.NEAREST)
             ia = np.asarray(inks)
-            if has_ink and c < 4:
-                ys, xs = np.nonzero(ia > 128)
+            ys, xs = np.nonzero(ia > 128) if has_ink and c < 4 else ((), ())
+            if len(ys):  # 줄이면 가는 선이 128 아래로 옅어질 수 있다
                 j = random.randrange(len(ys))
                 cx, cy = xs[j] + random.randint(-S // 4, S // 4), ys[j] + random.randint(-S // 4, S // 4)
             else:
