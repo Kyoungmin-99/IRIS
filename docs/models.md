@@ -60,7 +60,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/models/tattoo-ink.onnx`, 1.9MB (합성 8,000장 4 에포크, 검증 IoU 0.39. 학습을 이어 가며 나은 것으로 바꾼다) |
-| 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net |
+| 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net. 배경 사진은 IRIS testdata 수집 사진(colla2)·사용자 손 사진 → 그 사진들의 권리 기록을 따름 |
 | 입력 | `image` float32 `[1, 3, H, W]`, RGB 0~1, **H·W 는 8의 배수면 아무 크기**(완전 합성곱) |
 | 출력 | `logit` float32 `[1, 1, H, W]` |
 | core | `web/src/core/tattoo-ink.ts` — `tattooInkProb(img, runner, maxSide)` |
@@ -77,7 +77,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/models/hair-matte-256.onnx` 1.6MB (384 도 1.6MB) |
-| 출처 | IRIS 자체 학습(`tools/train/hair`, CelebAMask-HQ 라벨 + 선생님 모델 정밀화) |
+| 출처 · 권리 | IRIS 자체 학습(`tools/train/hair`, CelebAMask-HQ 라벨 + 선생님 모델 정밀화). CelebAMask-HQ 는 **비상업 연구용** → 상업 앱에는 다시 학습 필요 |
 | 입력 | `image` float32 `[n, 3, 256, 256]`(또는 384), RGB 0~1, 머리 둘레를 잘라 정사각형으로 |
 | 출력 | `logit` float32 `[n, 1, N, N]` → 시그모이드 = 머리카락 알파 |
 | 코드 | `web/src/engine/hairnet.ts`(실시간 실험용) — core 로 옮길 예정 |
@@ -87,7 +87,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/models/face-parse-512.onnx` 26MB (폰은 fp16·int8 양자화본 7~13MB 로 바꿀 예정) |
-| 출처 · 라이선스 | BiSeNet 얼굴 파싱(zllrunning/face-parsing.PyTorch, MIT, CelebAMask-HQ) 변환(`tools/train/face_parse_export.py`) |
+| 출처 · 라이선스 | BiSeNet 얼굴 파싱(zllrunning/face-parsing.PyTorch, 코드 MIT) 변환(`tools/train/face_parse_export.py`). 가중치는 CelebAMask-HQ(**비상업 연구용**)로 학습 → 상업 앱에는 다른 모델·재학습 필요 |
 | 입력 | `image` float32 `[1, 3, 512, 512]`, RGB 0~1(정규화는 모델 안), 얼굴 둘레 정사각형(밖은 검정) |
 | 출력 | `parts` float32 `[1, 4, 512, 512]` — 채널 0 머리카락, 1 얼굴(피부·눈·눈썹·코·입·귀), 2 목, 3 안경의 **확률**(0~1, 이미 소프트맥스) |
 | 코드 | `web/src/beauty/face-parse.ts` — core 로 옮길 예정 |
@@ -121,6 +121,10 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 
 - 생성형(AnyDoor · Stable-Makeup · HairFastGAN, `tools/realistic`)은 확산·GAN 모델이라 폰에서 돌릴 수 없다 → 앱은 서버 API 호출(또는 끔).
 - 스타일 AI(FashionSigLIP · SigLIP-L 임베딩 + 헤드)는 AI 저장소 쪽 규격을 따른다.
+
+## 앱에 포즈 33점이 없을 때 (코덱스 답 2026-10-27: 앱 네이티브 모듈에 얼굴·손 점·셀피/머리카락 분할은 있고 포즈는 없음)
+- 된다: 네일(손 21점 + 손톱 모델), 손등 타투(손 21점 + 셀피 분할), 메이크업(얼굴 478점), 헤어 염색(머리카락 분할 + 얼굴 점), 사용자가 자리를 직접 고르는 실시간 타투.
+- 안 된다: 팔·다리·몸통 타투를 고른 사진과 같은 자리에 맞춰 놓기(팔 마디·어깨·엉덩이 점이 필요).
 
 ## 바꿀 때 지킬 것
 - 새 모델은 ONNX(opset 17, 표준 연산만), 입력 RGB 0~1 NCHW float32, 출력 로짓 하나. 가능하면 10MB 아래.
