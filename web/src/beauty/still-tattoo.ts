@@ -147,10 +147,12 @@ export function inkOnArm(ink: InkMap, arm: Arm): { up: number; lo: number } {
 /**
  * 내 사진(dst)의 팔에 고른 사진 팔(srcArm)의 잉크를 옮긴다.
  * mirror: 반대쪽 팔로 옮길 때(옆 방향을 뒤집어 바깥쪽이 바깥쪽으로 가게). skin: 내 사진 몸 피부 확률.
+ * stats: 넘기면 굽기 자기 점검용으로 옮길 잉크 양(ink)과 그중 피부라서 실제로 구운 양(kept)을 채운다.
  */
+export interface InkStats { ink: number; kept: number }
 export function transferArmInk(
   dst: Uint8ClampedArray, W: number, H: number, dstArm: Arm, skin: Float32Array,
-  ink: InkMap, srcArm: Arm | ((lambda: number, s: number) => P | null), mirror = false, amount = 1,
+  ink: InkMap, srcArm: Arm | ((lambda: number, s: number) => P | null), mirror = false, amount = 1, stats?: InkStats,
 ): Uint8ClampedArray {
   // 고른 사진 쪽 대응: 팔 점이 있으면 마디끼리, 없으면 넘겨받은 함수(내 팔 길이 λ px, 옆 s → 고른 사진 좌표)
   const upLen = Math.hypot(dstArm.e.x - dstArm.s.x, dstArm.e.y - dstArm.s.y);
@@ -190,7 +192,7 @@ export function transferArmInk(
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const i = y * W + x;
     const k = Math.max(0, Math.min(1, (skin[i] - 0.3) / 0.4));
-    if (k <= 0) continue;
+    if (k <= 0 && !stats) continue;
     // 마디마다 대응점을 구해, 팔꿈치 근처에서는 두 마디를 거리로 섞는다(이음매 없이)
     acc.fill(0);
     let wsum = 0;
@@ -219,7 +221,9 @@ export function transferArmInk(
       }
     }
     if (wsum <= 0) continue;
-    const a = Math.min(1, (acc[3] / wsum) * amount) * k;
+    const a0 = Math.min(1, (acc[3] / wsum) * amount);
+    if (stats) { stats.ink += a0; stats.kept += a0 * k; }
+    const a = a0 * k;
     if (a < 0.004) continue;
     const hl = Math.max(0, L[i] - Lb[i]);
     for (let c = 0; c < 3; c++) {
@@ -533,7 +537,7 @@ const apply = (M: number[], p: P): P => ({ x: M[0] * p.x + M[1] * p.y + M[2], y:
  * toRef: 내 사진 좌표 → 고른 사진 좌표, fromRef: 그 반대(범위 계산용).
  */
 export function transferTorsoInk(
-  dst: Uint8ClampedArray, W: number, H: number, skin: Float32Array, ink: InkMap, toRef: number[], fromRef: number[], amount = 1,
+  dst: Uint8ClampedArray, W: number, H: number, skin: Float32Array, ink: InkMap, toRef: number[], fromRef: number[], amount = 1, stats?: InkStats,
 ): Uint8ClampedArray {
   const out = new Uint8ClampedArray(dst);
   // 내 사진 1px → 고른 사진 몇 px(어파인 넓이 배율의 제곱근)
@@ -550,14 +554,16 @@ export function transferTorsoInk(
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const i = y * W + x;
     const k = Math.max(0, Math.min(1, (skin[i] - 0.3) / 0.4));
-    if (k <= 0) continue;
+    if (k <= 0 && !stats) continue;
     acc.fill(0);
     for (const [ox, oy] of SUB) {
       const p = apply(toRef, { x: x + ox, y: y + oy });
       sampleInk(ink, p.x, p.y, o);
       for (let c = 0; c < 4; c++) acc[c] += (c < 3 ? o[c] * o[3] : o[3]) / 4;
     }
-    const a = Math.min(1, acc[3] * amount) * k;
+    const a0 = Math.min(1, acc[3] * amount);
+    if (stats) { stats.ink += a0; stats.kept += a0 * k; }
+    const a = a0 * k;
     if (a < 0.004) continue;
     const hl = Math.max(0, L[i] - Lb[i]);
     for (let c = 0; c < 3; c++) {

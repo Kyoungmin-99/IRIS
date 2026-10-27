@@ -1752,9 +1752,11 @@ async function updateStillHair(): Promise<void> {
       }
       if (plan) {
         setStatus('타투를 팔에 옮기는 중…');
+        const st = { ink: 0, kept: 0 };
         out = plan.torso
-          ? transferTorsoInk(out, base.w, base.h, plan.skin, plan.ink, plan.torso.toRef, plan.torso.fromRef, Math.min(1, strength))
-          : transferArmInk(out, base.w, base.h, plan.dst, plan.skin, plan.ink, plan.src, false, Math.min(1, strength));
+          ? transferTorsoInk(out, base.w, base.h, plan.skin, plan.ink, plan.torso.toRef, plan.torso.fromRef, Math.min(1, strength), st)
+          : transferArmInk(out, base.w, base.h, plan.dst, plan.skin, plan.ink, plan.src, false, Math.min(1, strength), st);
+        dbgTat({ kept: st.ink ? +(st.kept / st.ink).toFixed(3) : null, inkPx: Math.round(st.ink) });
       }
       const bmp = await createImageBitmap(new ImageData(out as unknown as Uint8ClampedArray<ArrayBuffer>, base.w, base.h));
       if (stale()) return;
