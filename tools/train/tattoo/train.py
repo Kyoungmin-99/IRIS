@@ -2,6 +2,8 @@
 
 synth.py 가 만든 data/images, data/masks 를 쓴다. 완전 합성곱이라 학습은 256, 앱에서는 아무 크기(8의 배수)로 돌린다.
   python train.py --data data --out out --epochs 12
+실제 사진 자료(teacher.py → crops.py, weights/ 포함)를 섞을 때: --data data real:3  (':3' = 그 묶음을 3번 반복)
+weights/{이름}.png 가 있으면 픽셀별 학습 가중치(0 = 모름, 배우지 않음), 없으면 전부 1.
 결과: out/best.pt, out/tattoo-ink.onnx(입력 image [n,3,H,W] 0~1, 출력 logit [n,1,H,W]), out/samples/*.png
 """
 from __future__ import annotations
@@ -18,32 +20,35 @@ import torch.nn.functional as F
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nail"))
-from train import UNet, dice_loss  # noqa: E402  손톱 모델과 같은 작은 U-Net
+from train import UNet  # noqa: E402  손톱 모델과 같은 작은 U-Net
 
 S = 256
 
 
 class InkData(torch.utils.data.Dataset):
-    def __init__(self, root: Path, names: list[str], train: bool) -> None:
-        self.root, self.names, self.train = root, names, train
+    def __init__(self, items: list[tuple[Path, str]], train: bool) -> None:
+        self.items, self.train = items, train
 
     def __len__(self) -> int:
-        return len(self.names)
+        return len(self.items)
 
     def __getitem__(self, i: int):
-        n = self.names[i]
-        x = np.asarray(Image.open(self.root / "images" / f"{n}.jpg").convert("RGB"), np.float32) / 255
-        y = np.asarray(Image.open(self.root / "masks" / f"{n}.png"), np.float32) / 255
+        root, n = self.items[i]
+        x = np.asarray(Image.open(root / "images" / f"{n}.jpg").convert("RGB"), np.float32) / 255
+        y = np.asarray(Image.open(root / "masks" / f"{n}.png"), np.float32) / 255
+        wp = root / "weights" / f"{n}.png"
+        w = np.asarray(Image.open(wp), np.float32) / 255 if wp.exists() else np.ones_like(y)
         if self.train:
             k = random.randint(0, 3)
-            x, y = np.rot90(x, k), np.rot90(y, k)
+            x, y, w = np.rot90(x, k), np.rot90(y, k), np.rot90(w, k)
             if random.random() < 0.5:
-                x, y = x[:, ::-1], y[:, ::-1]
+                x, y, w = x[:, ::-1], y[:, ::-1], w[:, ::-1]
             # 색·밝기 흔들기
             x = np.clip(x * random.uniform(0.8, 1.2) + random.uniform(-0.05, 0.05), 0, 1)
         # 옅은 잉크도 잉크로: 알파 0.08 넘으면 정답 쪽으로(진하기 그대로 쓰면 파인라인을 놓친다)
         y = np.clip(y / 0.35, 0, 1)
-        return torch.from_numpy(np.ascontiguousarray(x)).permute(2, 0, 1), torch.from_numpy(np.ascontiguousarray(y))[None]
+        t = lambda a: torch.from_numpy(np.ascontiguousarray(a))  # noqa: E731
+        return t(x).permute(2, 0, 1), t(y)[None], t(w)[None]
 
 
 def save_samples(x, y, p, path: Path) -> None:
@@ -58,7 +63,7 @@ def save_samples(x, y, p, path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="data")
+    ap.add_argument("--data", nargs="+", default=["data"], help="자료 폴더(여럿 가능, '폴더:반복 수')")
     ap.add_argument("--out", default="out")
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--batch", type=int, default=16)
@@ -67,14 +72,18 @@ def main() -> None:
     a = ap.parse_args()
     random.seed(0)
     torch.manual_seed(0)
-    root = Path(a.data)
-    names = sorted(p.stem for p in (root / "masks").glob("*.png"))
-    random.shuffle(names)
-    nval = max(16, len(names) // 20)
-    val, tr = names[:nval], names[nval:]
+    tr, val = [], []
+    for d in a.data:
+        root, rep = (Path(d.rsplit(":", 1)[0]), int(d.rsplit(":", 1)[1])) if ":" in d else (Path(d), 1)
+        names = sorted(p.stem for p in (root / "masks").glob("*.png"))
+        random.shuffle(names)
+        nval = max(16, len(names) // 20)
+        val += [(root, n) for n in names[:nval]]
+        tr += [(root, n) for n in names[nval:]] * rep
+        print(f"{root}: {len(names)}장 × {rep}", flush=True)
     print(f"학습 {len(tr)}장, 검증 {len(val)}장", flush=True)
-    dl = torch.utils.data.DataLoader(InkData(root, tr, True), batch_size=a.batch, shuffle=True, num_workers=2, drop_last=True)
-    dv = torch.utils.data.DataLoader(InkData(root, val, False), batch_size=a.batch, shuffle=False, num_workers=1)
+    dl = torch.utils.data.DataLoader(InkData(tr, True), batch_size=a.batch, shuffle=True, num_workers=2, drop_last=True)
+    dv = torch.utils.data.DataLoader(InkData(val, False), batch_size=a.batch, shuffle=False, num_workers=1)
     model = UNet()
     if a.resume:
         model.load_state_dict(torch.load(a.resume, map_location="cpu"))
@@ -91,10 +100,14 @@ def main() -> None:
     for ep in range(a.epochs):
         model.train()
         tot = 0.0
-        for x, y in dl:
+        for x, y, w in dl:
             logit = model(x)
-            # 잉크 픽셀이 적어 양성에 가중(파인라인)
-            loss = F.binary_cross_entropy_with_logits(logit, y, pos_weight=torch.tensor(3.0)) + dice_loss(logit, y)
+            # 잉크 픽셀이 적어 양성에 가중(파인라인). w = 0 인 곳(모름)은 배우지 않는다
+            bce = F.binary_cross_entropy_with_logits(logit, y, pos_weight=torch.tensor(3.0), reduction="none")
+            p = torch.sigmoid(logit) * w
+            inter = (p * y).sum((1, 2, 3))
+            dice = 1 - ((2 * inter + 1) / (p.sum((1, 2, 3)) + (y * w).sum((1, 2, 3)) + 1)).mean()
+            loss = (bce * w).sum() / w.sum().clamp(min=1) + dice
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -110,9 +123,9 @@ def main() -> None:
         model.eval()
         inter = union = 0.0
         with torch.no_grad():
-            for k, (x, y) in enumerate(dv):
-                p = (torch.sigmoid(model(x)) > 0.5).float()
-                t = (y > 0.5).float()
+            for k, (x, y, w) in enumerate(dv):
+                p = (torch.sigmoid(model(x)) > 0.5).float() * (w > 0.5)
+                t = (y > 0.5).float() * (w > 0.5)
                 inter += (p * t).sum().item()
                 union += ((p + t) > 0).float().sum().item()
                 if k == 0:
