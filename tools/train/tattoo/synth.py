@@ -179,7 +179,12 @@ def main() -> None:
     print(f"배경 {len(files)}장, 글꼴 {len(fonts)}개")
     (out / "backgrounds.txt").write_text("".join(f"{sha[p]}\t{p}\n" for p in files), encoding="utf-8")
     cache: dict[Path, tuple[np.ndarray, np.ndarray]] = {}
-    k = 0
+    # 이어 만들기(컨테이너가 다시 시작돼 중간에 끊겨도): 이미 있는 장수부터, 난수는 그만큼 다르게(겹치지 않게)
+    k = len(list((out / "masks").glob("*.png")))
+    if k:
+        random.seed(args.seed + k)
+        np.random.seed(args.seed + k)
+        print(f"이어 만들기: {k}장부터", flush=True)
     tries = 0
     while k < args.n and tries < args.n * 20:
         tries += 1
