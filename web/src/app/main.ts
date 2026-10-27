@@ -1315,6 +1315,9 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       const refFacePts = await photoAnalyzer.faceLandmarks(rc).catch(() => null);
       tatStep('ink');
       let faceM: Float32Array | null = null;
+      // 관절점 얼굴 타원은 머리카락이 보일 때만 쓴다(아래): 얼굴 없는 팔 클로즈업에서도 포즈가 코를 지어내(나침반 타투 사진)
+      // 그 타원과 얼굴 분할이 팔 위 도안의 92% 를 지웠다
+      let poseFace: Float32Array | null = null;
       if (refFacePts) {
         const ov = FACE_OVAL.map((i) => refFacePts[i]);
         const cx = ov.reduce((t, q) => t + q.x, 0) / ov.length, cy = ov.reduce((t, q) => t + q.y, 0) / ov.length;
@@ -1328,7 +1331,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         if (rx > 4) {
           const pts: { x: number; y: number }[] = [];
           for (let k = 0; k < 36; k++) pts.push({ x: nose.x + rx * Math.cos((k / 36) * Math.PI * 2), y: nose.y + rx * 1.4 * Math.sin((k / 36) * Math.PI * 2) });
-          faceM = fillPoly(pts, ref.w, ref.h);
+          poseFace = fillPoly(pts, ref.w, ref.h);
         }
       }
       // 얼굴 점도 관절점도 못 찾을 때가 있다(같은 셀카도 실행마다 다름 → 얼굴이 그대로 잉크로 남아 내 손목에 입술·콧구멍 조각):
@@ -1346,8 +1349,10 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         // 작은 조각(사진의 0.2% 미만: 뒤에 선 다른 사람·오검출)은 무시, 둘레 2% 넓혀 눈썹·입술 가장자리까지.
         // 머리카락이 거의 없으면(얼굴 넓이의 20% 미만) 얼굴로 보지 않는다: 이 모델의 '얼굴'은 피부까지 합친 채널이라
         // 얼굴 없는 팔 클로즈업에서 팔 피부를 사진의 22% 나 얼굴로 읽어 별 타투의 궤도·작은 별을 지웠다
-        dbgTat({ hairParse });
-        if (faceParse >= ref.w * ref.h * 0.002 && (hairParse >= faceParse * 0.2 || (rp && rp.vis[0] > 0.5))) {
+        const hairOk = hairParse >= ref.w * ref.h * 0.002 && hairParse >= faceParse * 0.2;
+        dbgTat({ hairParse, hairOk });
+        if (poseFace && hairOk) faceM = poseFace;
+        if (faceParse >= ref.w * ref.h * 0.002 && (hairOk || refFacePts)) {
           const bl = boxBlur(m, ref.w, ref.h, Math.max(2, Math.round(size * 0.02)));
           const fm = faceM ?? new Float32Array(ref.w * ref.h);
           for (let i = 0; i < fm.length; i++) if (bl[i] > 0.01) fm[i] = 1;
@@ -1355,6 +1360,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         }
       } catch {
         // 분할 모델을 못 불러오면 얼굴 점·관절점 타원만
+        faceM ??= poseFace;
       }
       dbgTat({ refFacePts: !!refFacePts, faceM: !!faceM, faceParse });
       const eraseFace = (im: InkMap): void => {

@@ -548,7 +548,20 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
   const oh = R.h;
   const inkMask = new Float32Array(n);
   const full = new Float32Array(ow * oh * 4);
-  // 잉크 찾기가 옅은 타투를 거의 못 잡았으면(거른 양이 30% 미만) 거르지 않고 다시
+  // 잉크 찾기가 옅은 타투를 거의 못 잡았으면(거른 양이 30% 미만) 거르지 않고 다시.
+  // 잉크 모델이 있으면 다시 할 때도 피부 안쪽(피부 가장자리에서 짧은 변 3% 넘게 들어온 곳)만: 넓은 팔 영역에 작은 타투(무한대)면
+  // 거른 양이 늘 30% 아래라 거르기가 통째로 풀려 팔 윤곽선·그늘이 도안으로 뽑혔다. 그렇다고 아예 안 풀면 잉크 찾기도 모델도
+  // 놓치는 굵은 먹 한 획(십자가)이 통째로 사라졌다
+  const P = src.inkProb;
+  let interior: Float32Array | null = null;
+  if (P) {
+    const sk = new Float32Array(n);
+    for (let i = 0; i < n; i++) sk[i] = src.skin[i] > 0.6 && (!src.avoid || src.avoid[i] < 0.3) ? 1 : 0;
+    // 굵은 먹 획은 분할이 피부가 아니라고 봐 구멍이 난다 → 먼저 넓혀 구멍을 메우고(2%) 더 크게 깎아(4%) 가장자리만 뺀다
+    const grown = boxBlur(sk, w, h, Math.max(2, short * 0.02));
+    for (let i = 0; i < n; i++) grown[i] = grown[i] > 0.05 ? 1 : 0;
+    interior = boxBlur(grown, w, h, Math.max(3, short * 0.04));
+  }
   for (let gate = 1; gate >= 0; gate--) {
     let sumG = 0, sumR = 0;
     for (let y = 0; y < oh; y++) {
@@ -565,7 +578,7 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
         // 피부가 아닌 곳(옷·머리카락·배경)은 도안이 아니다
         const onSkin = Math.max(src.avoid ? 1 - smooth(0.3, 0.6, src.avoid[i]) : 1, src.inkProb ? smooth(0.4, 0.7, src.inkProb[i]) : 0);
         const a0 = Math.max(dark, tint * 0.8) * onSkin;
-        const a = gate ? a0 * smooth(0, 0.04, inkNear[i]) : a0;
+        const a = gate ? a0 * Math.max(smooth(0, 0.04, inkNear[i]), P ? smooth(0.3, 0.6, P[i]) : 0) : interior ? a0 * smooth(0.85, 0.98, interior[i]) : a0;
         sumG += a;
         sumR += a0;
         inkMask[i] = a;
