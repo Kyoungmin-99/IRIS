@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +87,7 @@ def main() -> None:
     if a.resume:
         best = float("-inf")  # 이어서 할 때는 첫 회 결과부터 저장
     step = 0
+    t0 = time.time()
     for ep in range(a.epochs):
         model.train()
         tot = 0.0
@@ -99,6 +101,8 @@ def main() -> None:
             sched.step()
             tot += loss.item()
             step += 1
+            if step % 20 == 0:
+                print(f"  {step} 배치 ({(time.time() - t0) / step:.1f}초/배치)", flush=True)
             if step % 100 == 0:
                 # 컨테이너가 자주 다시 시작돼 에포크(30분 넘게) 단위로만 저장하면 계속 날아갔다: 100 배치마다 가중치 저장
                 torch.save(model.state_dict(), out / "last.pt")
