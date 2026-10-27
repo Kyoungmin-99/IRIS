@@ -5,12 +5,15 @@
 잉크 투과율로 곱해 넣고, 그 잉크 알파를 정답으로 저장한다. 얼굴의 눈썹·속눈썹·머리카락·옷 주름·손톱은 정답 0(타투 아님)으로 배운다.
 
   python synth.py --bg <사진 폴더들> --fonts <글꼴 폴더> --out data --n 8000
-결과: data/images/00000.jpg (256×256), data/masks/00000.png (잉크 알파 0~255)
+  상업용 판: --ledger <FINDE-photos>/rights/ledger.jsonl --commercial-only  (장부에서 commercial_ok 가 true 인 배경 사진만)
+결과: data/images/00000.jpg (256×256), data/masks/00000.png (잉크 알파 0~255), data/backgrounds.txt (쓴 배경 사진 sha256·경로, 권리 검토용)
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
+import json
 import math
 import random
 from pathlib import Path
@@ -124,15 +127,32 @@ def main() -> None:
     ap.add_argument("--out", default="data")
     ap.add_argument("--n", type=int, default=8000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ledger", default="", help="FINDE-photos rights/ledger.jsonl (비공개 권리 장부)")
+    ap.add_argument("--commercial-only", action="store_true", help="장부에서 commercial_ok 가 true 인 배경 사진만 쓴다(상업용 판)")
     args = ap.parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
     files = [p for d in args.bg for p in Path(d).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
+    sha = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+    if args.commercial_only:
+        if not args.ledger:
+            raise SystemExit("--commercial-only 에는 --ledger 가 필요하다")
+        ok = set()
+        for line in Path(args.ledger).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if row.get("commercial_ok") is True:
+                    ok.add(row["sha256"])
+        files = [p for p in files if sha[p] in ok]
+        print(f"상업용 판: 장부에서 commercial_ok 인 배경 {len(files)}장")
+        if not files:
+            raise SystemExit("상업 이용이 확인된 배경 사진이 없다")
     fonts = sorted(Path(args.fonts).glob("*.ttf"))
     out = Path(args.out)
     (out / "images").mkdir(parents=True, exist_ok=True)
     (out / "masks").mkdir(parents=True, exist_ok=True)
     print(f"배경 {len(files)}장, 글꼴 {len(fonts)}개")
+    (out / "backgrounds.txt").write_text("".join(f"{sha[p]}\t{p}\n" for p in files), encoding="utf-8")
     cache: dict[Path, tuple[np.ndarray, np.ndarray]] = {}
     k = 0
     tries = 0
