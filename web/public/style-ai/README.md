@@ -8,5 +8,4 @@ AI 채팅이 FINDE-photos `shared/models/style-r8` 로 넘겨준 묶음을 그�
 - `models/Marqo/marqo-fashionSigLIP/` — **r8 비전 인코더**(q8, 94,008,252 bytes, sha256 f907c69e…)와 설정 2개. 헤드와 한 쌍이라 Hugging Face 원본 인코더와 섞으면 결과가 조용히 틀린다.
   `web/src/beauty/style-ai.ts` 가 Transformers.js `env.localModelPath` 를 이 폴더로 둬 사이트 안에서 받는다.
 - 점수(한국 평가 433장): 원본 인코더 + 옛 헤드 75.8 → r8 86.5 (헤어 86.6 · 네일 90.6 · 메이크업 81.5 · 타투 83.4).
-- **권리**: AI 채팅 표기 `commercialStatus: not-cleared` — 학습 전용·비상업(CC BY-NC/ND 사진, 출처 기록 없는 코덱스 수집 사진으로 학습). 사용자가 테스트 사이트 공개를 결정(2026-10-27). 상업 출시 전에 권리 정리가 필요하다.
 - 라벨 합치기(r8): `매직 스트레이트`→`생머리`, `언더컷`→`투블럭컷`(헤드에서 옛 라벨은 거의 1위가 안 됨).

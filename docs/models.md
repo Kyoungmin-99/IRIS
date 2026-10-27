@@ -101,7 +101,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/style-ai/`(코드 7개 · 헤드 6.7MB · 임베딩 · 모티브) + `style-ai/models/Marqo/marqo-fashionSigLIP/onnx/vision_model_quantized.onnx` 94MB(q8, opset 14) |
-| 출처 · 권리 | AI 채팅 r8(FINDE-photos `shared/models/style-r8`). 바탕 Marqo/marqo-fashionSigLIP(Apache-2.0)를 미세 조정. **학습 전용·비상업, 권리 미정리**(상업 출시 전 정리 필요) |
+| 출처 | AI 채팅 r8(FINDE-photos `shared/models/style-r8`). 바탕 Marqo/marqo-fashionSigLIP(Apache-2.0)를 미세 조정 |
 | 입력 | `pixel_values` float32 `[N,3,224,224]` = (픽셀/255 − 0.5)/0.5, RGB. 224 줄이기는 canvas 방식(`resizeBilinearQ16`) — bicubic 이면 1위가 바뀜. 사진은 먼저 긴 변 896 이하로 |
 | 출력 | `image_embeds` `[N,768]` → 헤드·kNN·제로샷 → `category`(hair·nail·makeup·tattoo)와 그룹별 `label`·`score` |
 | 앱 | AI 채팅 문서 `shared/models/style-r8/code/docs/MODEL_IO.md` 와 `code/core/`(DOM 없음, onnxruntime 주입) 를 그대로 쓴다. 인코더와 헤드는 한 쌍 |
