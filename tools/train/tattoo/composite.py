@@ -83,6 +83,7 @@ def sam_arm(bg: np.ndarray, sm: np.ndarray, cache: Path, key: str) -> np.ndarray
             return m
     import torch
     from transformers import Sam2Model, Sam2Processor
+    torch.set_num_threads(int(__import__("os").environ.get("THREADS", "1")))  # 학습·라벨러와 CPU 를 나눠 쓴다
     if _SAM is None:
         _SAM = (Sam2Processor.from_pretrained("facebook/sam2.1-hiera-tiny"), Sam2Model.from_pretrained("facebook/sam2.1-hiera-tiny").eval())
     P, M = _SAM
