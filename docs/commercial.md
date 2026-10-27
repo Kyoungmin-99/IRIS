@@ -34,7 +34,7 @@
 | MediaPipe 손 · 얼굴 · 포즈 · 셀피 분할 | 그대로 | 가능(Apache-2.0) | — |
 | SlimSAM(누른 곳 오려 내기) | 그대로 | 가능(Apache-2.0) | — |
 | onnxruntime-web · Transformers.js | 그대로 | 가능(MIT · Apache-2.0) | — |
-| 타투 잉크 `tattoo-ink.onnx` | IRIS 합성 학습 | 도안·글꼴(OFL)은 가능, **배경 사진**(testdata colla2 · 손 사진) 권리 확인 필요 | 상업 허락 배경 사진(요청 2 · 7, 장부 `commercial_ok`)으로 합성 자료를 다시 만들어 재학습 |
+| 타투 잉크 `tattoo-ink.onnx` | IRIS 합성 학습(연구용 판에 HF `Drozdik/tattoo_v0` 도안 CC BY-NC-SA 를 섞음 → 상업용 판은 `--designs` 없이 또는 상업 허락 도안으로) | 도안·글꼴(OFL)은 가능, **배경 사진**(testdata colla2 · 손 사진) 권리 확인 필요 | 상업 허락 배경 사진(요청 2 · 7, 장부 `commercial_ok`)으로 합성 자료를 다시 만들어 재학습 |
 | 손톱 분할 `nail-crop-128.onnx`(r3) | AI 채팅 r3 | 근거 부족(Kaggle 원 출처 미확인 · 수집 사진 가짜 정답) | IRIS 가 상업판 재학습: vpapenko 손톱 데이터(CC0) + 직접 촬영 손 + 장부 `commercial_ok` 손 사진(요청 1 · 9) |
 | 스타일 분석 r8(인코더 · 헤드) | AI 채팅 r8 | 근거 부족(출처 기록 없는 학습 사진 포함) | AI 채팅이 장부 `commercial_ok` 사진만으로 상업판 재학습(바탕 Marqo-fashionSigLIP 은 Apache-2.0) |
 | 얼굴 분할 `face-parse-512.onnx` | BiSeNet + CelebAMask-HQ | 불가(CelebAMask-HQ 비상업 연구용) | MediaPipe 얼굴 점 + 셀피 분할(Apache)로 대체하거나, 상업 허락 사진에 MediaPipe 결과를 선생님 삼아 자체 학습 |

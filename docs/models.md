@@ -60,7 +60,7 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 항목 | 값 |
 |---|---|
 | 파일 · 크기 | `web/public/models/tattoo-ink.onnx`, 1.9MB (합성 8,000장 4 에포크, 검증 IoU 0.39. 학습을 이어 가며 나은 것으로 바꾼다) |
-| 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net. 배경 사진은 IRIS testdata 수집 사진(colla2)·사용자 손 사진 → 그 사진들의 권리 기록을 따름 |
+| 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net. 배경 사진은 IRIS testdata 수집 사진(colla2)·사용자 손 사진·코덱스 맨살 팔 사진 → 그 사진들의 권리 기록을 따름. 2026-10-27 부터 연구용 판은 실제 타투 도안 그림(Hugging Face `Drozdik/tattoo_v0` 4,370장, CC BY-NC-SA 4.0 — **연구용 판만**)을 절반 섞어 합성 |
 | 입력 | `image` float32 `[1, 3, H, W]`, RGB 0~1, **H·W 는 8의 배수면 아무 크기**(완전 합성곱) |
 | 출력 | `logit` float32 `[1, 1, H, W]` |
 | core | `web/src/core/tattoo-ink.ts` — `tattooInkProb(img, runner, maxSide)` |

@@ -6,6 +6,7 @@
 
   python synth.py --bg <사진 폴더들> --fonts <글꼴 폴더> --out data --n 8000
   상업용 판: --ledger <FINDE-photos>/rights/ledger.jsonl --commercial-only  (장부에서 commercial_ok 가 true 인 배경 사진만)
+  실제 도안: --designs <흰 바탕 타투 도안 그림 폴더> --design-frac 0.5  (그 비율만큼 무작위 획 대신 실제 도안을 피부에 입힘, 절반은 흑백으로)
 결과: data/images/00000.jpg (256×256), data/masks/00000.png (잉크 알파 0~255), data/backgrounds.txt (쓴 배경 사진 sha256·경로, 권리 검토용)
 """
 from __future__ import annotations
@@ -39,6 +40,25 @@ def skin_mask(rgb: np.ndarray) -> np.ndarray:
 def bezier(p: np.ndarray, n: int = 60) -> np.ndarray:
     t = np.linspace(0, 1, n)[:, None]
     return ((1 - t) ** 3) * p[0] + 3 * ((1 - t) ** 2) * t * p[1] + 3 * (1 - t) * (t ** 2) * p[2] + (t ** 3) * p[3]
+
+
+def real_design(files: list[Path], size: int) -> tuple[np.ndarray, np.ndarray]:
+    """흰 바탕 타투 도안 그림 → (알파 0~1, 잉크 색 RGB 0~1). 어두울수록·색이 짙을수록 잉크가 많다(회색 음영은 옅은 잉크).
+    크기·회전·위치 무작위, 절반은 흑백(블랙앤그레이)"""
+    im = Image.open(random.choice(files)).convert("RGB")
+    sc = random.uniform(0.35, 1.1) * size / max(im.size)
+    im = im.resize((max(8, int(im.width * sc)), max(8, int(im.height * sc))), Image.BILINEAR)
+    im = im.rotate(random.uniform(-35, 35), resample=Image.BILINEAR, expand=True, fillcolor=(255, 255, 255))
+    if random.random() < 0.5:
+        im = im.convert("L").convert("RGB")
+    canvas = Image.new("RGB", (size, size), (255, 255, 255))
+    canvas.paste(im, (random.randint(-im.width // 4, max(0, size - im.width * 3 // 4)), random.randint(-im.height // 4, max(0, size - im.height * 3 // 4))))
+    rgb = np.asarray(canvas, np.float32) / 255
+    lum = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
+    sat = rgb.max(2) - rgb.min(2)
+    alpha = np.clip(np.maximum(1 - lum, sat) * 1.15 - 0.05, 0, 1)
+    color = np.where(alpha[..., None] > 1e-3, np.clip((rgb - (1 - alpha[..., None])) / np.maximum(alpha[..., None], 1e-3), 0, 1), 0)
+    return alpha.astype(np.float32), color.astype(np.float32)
 
 
 def draw_design(fonts: list[Path], size: int) -> tuple[np.ndarray, np.ndarray]:
@@ -128,6 +148,8 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=8000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--ledger", default="", help="FINDE-photos rights/ledger.jsonl (비공개 권리 장부)")
+    ap.add_argument("--designs", default="", help="흰 바탕 실제 타투 도안 그림 폴더")
+    ap.add_argument("--design-frac", type=float, default=0.5)
     ap.add_argument("--commercial-only", action="store_true", help="장부에서 commercial_ok 가 true 인 배경 사진만 쓴다(상업용 판)")
     args = ap.parse_args()
     random.seed(args.seed)
@@ -148,6 +170,9 @@ def main() -> None:
         if not files:
             raise SystemExit("상업 이용이 확인된 배경 사진이 없다")
     fonts = sorted(Path(args.fonts).glob("*.ttf"))
+    designs = sorted(p for p in Path(args.designs).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")) if args.designs else []
+    if designs:
+        print(f"실제 도안 {len(designs)}장 (비율 {args.design_frac})")
     out = Path(args.out)
     (out / "images").mkdir(parents=True, exist_ok=True)
     (out / "masks").mkdir(parents=True, exist_ok=True)
@@ -185,7 +210,7 @@ def main() -> None:
             alpha = np.zeros((S, S), np.float32)
             img = bg
         else:
-            alpha, color = draw_design(fonts, S)
+            alpha, color = real_design(designs, S) if designs and random.random() < args.design_frac else draw_design(fonts, S)
             # 잉크는 피부에만(경계는 부드럽게), 진하기 무작위(옅은 파인라인 ~ 진한 블랙)
             alpha = alpha * np.clip((skin - 0.3) / 0.4, 0, 1) * random.uniform(0.55, 1.0)
             # 투과율: 검은 잉크는 피부를 어둡게(오래된 잉크는 푸르스름하게), 색 잉크는 그 색으로
