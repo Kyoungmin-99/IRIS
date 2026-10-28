@@ -1350,9 +1350,14 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         // 머리카락이 거의 없으면(얼굴 넓이의 20% 미만) 얼굴로 보지 않는다: 이 모델의 '얼굴'은 피부까지 합친 채널이라
         // 얼굴 없는 팔 클로즈업에서 팔 피부를 사진의 22% 나 얼굴로 읽어 별 타투의 궤도·작은 별을 지웠다
         const hairOk = hairParse >= ref.w * ref.h * 0.002 && hairParse >= faceParse * 0.2;
-        dbgTat({ hairParse, hairOk });
-        if (poseFace && hairOk) faceM = poseFace;
-        if (faceParse >= ref.w * ref.h * 0.002 && (hairOk || refFacePts)) {
+        // 얼굴 점이 없을 때 얼굴 크기가 관절점 어깨 폭과 맞는지: 손목 하트 사진에서 분할이 팔 피부를 얼굴(사진의 8%)로,
+        // 침대 시트를 머리카락으로 읽고 포즈도 코를 지어내 하트를 지웠다(어깨 폭 74px 인데 '얼굴'은 어깨 폭 제곱의 10배).
+        // 실제 얼굴은 어깨 폭 제곱의 1/4 안팎이라 그 4배(어깨 폭 제곱)를 넘으면 얼굴로 보지 않는다
+        const sw = rp && Math.min(rp.vis[11], rp.vis[12]) > 0.5 ? Math.hypot(rp.p[11].x - rp.p[12].x, rp.p[11].y - rp.p[12].y) : 0;
+        const faceFits = !!refFacePts || !sw || faceParse <= sw * sw;
+        dbgTat({ hairParse, hairOk, sw: Math.round(sw), faceFits });
+        if (poseFace && hairOk && faceFits) faceM = poseFace;
+        if (faceParse >= ref.w * ref.h * 0.002 && (hairOk || refFacePts) && faceFits) {
           const bl = boxBlur(m, ref.w, ref.h, Math.max(2, Math.round(size * 0.02)));
           const fm = faceM ?? new Float32Array(ref.w * ref.h);
           for (let i = 0; i < fm.length; i++) if (bl[i] > 0.01) fm[i] = 1;
@@ -1365,10 +1370,14 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       dbgTat({ refFacePts: !!refFacePts, faceM: !!faceM, faceParse });
       const eraseFace = (im: InkMap): void => {
         if (!faceM) return;
+        let all = 0, gone = 0;
         for (let y = 0; y < im.h; y++) for (let x = 0; x < im.w; x++) {
           const X = Math.round(im.rect.x + ((x + 0.5) / im.w) * im.rect.w), Y = Math.round(im.rect.y + ((y + 0.5) / im.h) * im.rect.h);
-          if (X >= 0 && Y >= 0 && X < ref.w && Y < ref.h && faceM[Y * ref.w + X] > 0) im.rgba[(y * im.w + x) * 4 + 3] = 0;
+          const j = (y * im.w + x) * 4 + 3;
+          all += im.rgba[j];
+          if (X >= 0 && Y >= 0 && X < ref.w && Y < ref.h && faceM[Y * ref.w + X] > 0) { gone += im.rgba[j]; im.rgba[j] = 0; }
         }
+        dbgTat({ faceErased: all ? +(gone / all).toFixed(3) : 0 });
       };
       const dc = ref.design.canvas!;
       let ink: InkMap = { rgba: new Uint8ClampedArray(dc.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, dc.width, dc.height).data), w: dc.width, h: dc.height, rect: ref.rect };
