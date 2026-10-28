@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -33,6 +34,12 @@ def get(url: str, tries: int = 4) -> bytes:
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=60) as r:
                 return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404, 410):  # 없는 사진은 다시 받아도 없다
+                raise RuntimeError(url) from e
+            print("  다시:", str(e)[:80], flush=True)
+            time.sleep(wait)
+            wait *= 2
         except Exception as e:
             print("  다시:", str(e)[:80], flush=True)
             time.sleep(wait)
@@ -68,9 +75,15 @@ def main() -> None:
             m = meta.get(iid)
             if iid in seen or not m or "creativecommons.org/licenses/by" not in m["License"] or "-nc" in m["License"] or "-nd" in m["License"]:
                 continue
-            try:
-                data = get(f"https://open-images-dataset.s3.amazonaws.com/{split}/{iid}.jpg")
-            except RuntimeError:
+            data = None
+            # S3 에 없으면(훈련 묶음 일부) 원본 Flickr 주소로
+            for url in (f"https://open-images-dataset.s3.amazonaws.com/{split}/{iid}.jpg", m["OriginalURL"]):
+                try:
+                    data = get(url)
+                    break
+                except RuntimeError:
+                    continue
+            if data is None:
                 continue
             im = Image.open(io.BytesIO(data)).convert("RGB")
             s = min(1, 1024 / max(im.size))
