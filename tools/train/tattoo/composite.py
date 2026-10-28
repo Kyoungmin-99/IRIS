@@ -4,6 +4,8 @@
 출력: images/{id}.jpg, masks/{id}.png(잉크 알파), labels.jsonl
   style: black(음영 없는 먹) · blackgrey(진한 윤곽 + 단계 음영) · color(color_kind: red · point · full)
   --mode pairs: 같은 도안·같은 자리·같은 진하기로 blackgrey / black 짝(pair 칸이 같음 — 차이는 음영 하나뿐)
+  --mode pointpairs: 같은 도안·자리로 포인트컬러(먹 위 일부만 색) / 색 뺀 판(흑백, style 은 음영에 따라 blackgrey·black) 짝
+  --sizes small,medium: 크기 고르기(AI 채팅: 미니는 효과 없어 뺌)
   --mode color: 색 도안만, --strict: 피부 밖으로 5% 넘게 잘린 것(옷·배경·손가락 위) 버림, --sam: SAM 2.1 로 오린 팔·손 안에만
   size: mini(사진의 0.5~2%) · small(2~5%) · medium(5~12%) — 도안 상자 넓이 / 사진 넓이
   placement: 배경 사진의 category(forearm_outer 등) 그대로, bbox: [x0, y0, x1, y1] 픽셀
@@ -39,9 +41,15 @@ def backgrounds(pattern: str) -> list[tuple[Path, str]]:
 
 
 def design(path: Path, style: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """도안 그림 → 잘라 낸 (알파, 잉크 색). 흰 여백은 잘라 낸다"""
+    """도안 그림 → 잘라 낸 (알파, 잉크 색). 흰 여백은 잘라 낸다.
+    자르는 범위는 스타일과 상관없이 원본 도안의 잉크 범위(짝끼리 같은 자리에 오게: 전에는 스타일마다 잘라 블랙 판이 조금 밀렸다)"""
     rgb = np.asarray(Image.open(path).convert("RGB"), np.float32) / 255
     sat = rgb.max(2) - rgb.min(2)
+    base = np.clip(np.maximum(1 - rgb @ np.array([0.299, 0.587, 0.114], np.float32), sat) * 1.15 - 0.05, 0, 1)
+    ys, xs = np.nonzero(base > 0.1)
+    if len(ys) < 50:
+        return None
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     if style == "color":
         s5 = sat[sat > 0.05]
         if len(s5) < 100 or np.percentile(s5, 90) < 0.25:
@@ -53,11 +61,9 @@ def design(path: Path, style: str) -> tuple[np.ndarray, np.ndarray] | None:
     alpha = np.clip(np.maximum(1 - lum, sat) * 1.15 - 0.05, 0, 1)
     if style == "black":
         alpha = np.clip((alpha - 0.35) / 0.1, 0, 1)  # 회색 음영 없이 먹만
-    ys, xs = np.nonzero(alpha > 0.1)
-    if len(ys) < 50:
-        return None
-    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     alpha, rgb = alpha[y0:y1, x0:x1], rgb[y0:y1, x0:x1]
+    if (alpha > 0.1).sum() < 50:
+        return None
     if (alpha > 0.5).mean() > 0.45 or ((alpha > 0.15) & (alpha < 0.5)).mean() > 0.35:
         return None  # 꽉 찬 원·네모 바탕이나 넓고 밋밋한 회색 면 도안은 스티커·패치처럼 보인다
     if style == "blackgrey":
@@ -235,9 +241,10 @@ def main() -> None:
     ap.add_argument("--maxside", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--exclude", default="", help="배경에서 뺄 사진 목록(시험 전용 맨살 팔 등, 한 줄에 경로 하나)")
-    ap.add_argument("--mode", default="mixed", choices=["mixed", "pairs", "color"],
+    ap.add_argument("--mode", default="mixed", choices=["mixed", "pairs", "color", "pointpairs"],
                     help="mixed: 스타일 무작위 · pairs: 같은 도안·자리의 black/blackgrey 짝 · color: 색 도안만(color_kind: red/point/full)")
     ap.add_argument("--strict", action="store_true", help="피부 밖으로 5% 넘게 잘린 합성은 버림")
+    ap.add_argument("--sizes", default=",".join(SIZES), help="쓸 크기(쉼표로)")
     ap.add_argument("--sam", action="store_true", help="SAM 2.1 로 팔·손 영역을 오려 그 안에만(배경 사진마다 한 번, out/_arm 에 캐시)")
     a = ap.parse_args()
     random.seed(a.seed)
@@ -260,15 +267,17 @@ def main() -> None:
     while k < a.n and tries < a.n * 30:
         tries += 1
         bp, cat = random.choice(bgs)
-        size = random.choice(list(SIZES))
+        size = random.choice(a.sizes.split(","))
         dp = random.choice(designs)
-        styles = {"pairs": ["blackgrey", "black"], "color": ["color"]}.get(a.mode, [random.choice(["black", "blackgrey", "color"])])
+        styles = {"pairs": ["blackgrey", "black"], "color": ["color"], "pointpairs": ["color", "gray"]}.get(a.mode, [random.choice(["black", "blackgrey", "color"])])
         ds = [design(dp, st) for st in styles]
         if any(d is None for d in ds):
             continue
-        ck = color_kind(*ds[0]) if styles == ["color"] else None
-        if styles == ["color"] and ck is None:
+        ck = color_kind(*ds[0]) if styles[0] == "color" else None
+        if styles[0] == "color" and ck is None or a.mode == "pointpairs" and ck != "point":
             continue
+        if "gray" in styles:  # 색 뺀 판의 이름: 음영 조건을 채우면 blackgrey, 아니면 black
+            styles = [st if st != "gray" else ("blackgrey" if design(dp, "blackgrey") else "black") for st in styles]
         im = Image.open(bp).convert("RGB")
         sc = min(1, a.maxside / max(im.size))
         im = im.resize((int(im.width * sc), int(im.height * sc)), Image.BILINEAR)
@@ -292,7 +301,7 @@ def main() -> None:
             Image.fromarray(img).save(out / "images" / f"{name}.jpg", quality=92)
             Image.fromarray((A * 255).astype(np.uint8)).save(out / "masks" / f"{name}.png")
             labels.write(json.dumps({
-                "file": f"images/{name}.jpg", "mask": f"masks/{name}.png", "style": st, **({"color_kind": ck} if ck else {}), **({"pair": pair} if pair else {}),
+                "file": f"images/{name}.jpg", "mask": f"masks/{name}.png", "style": st, **({"color_kind": ck} if ck and st == "color" else {}), **({"pair": pair} if pair else {}),
                 "size": size, "area_frac": round((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) / (img.shape[0] * img.shape[1]), 4), "bbox": bbox,
                 "placement": cat, "rotation": round(g["ang"], 1), "background_sha256": hashlib.sha256(bp.read_bytes()).hexdigest(), "design": dp.name,
             }, ensure_ascii=False) + "\n")

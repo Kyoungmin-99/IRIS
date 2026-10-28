@@ -26,7 +26,12 @@ COLORS = {
     "누드·베이지": (214, 172, 152), "밀키화이트": (238, 230, 224), "연핑크": (240, 184, 196), "코랄·피치": (238, 128, 104),
     "레드": (186, 22, 36), "버건디": (96, 18, 34), "블랙": (26, 23, 26), "네이비·블루": (32, 48, 112),
     "라벤더·퍼플": (182, 160, 214), "민트·그린": (152, 212, 188), "브라운·모카": (112, 76, 56), "더스티로즈": (190, 126, 132),
+    "그레이": (128, 128, 133), "실버": (196, 198, 204), "오렌지": (242, 112, 34),
 }
+METALLIC = {"실버"}  # 거울 같은 금속 광택(밝은 띠 + 어두운 반사 띠, 색 없음)
+OPACITY = {"밀키화이트": 0.82}  # 우윳빛은 살짝 비친다(누드·베이지와 가르는 단서)
+# AI 채팅 요청(2026-10-27): r8 이 헷갈리는 색끼리 같은 손에 짝
+GROUPS = [["밀키화이트", "누드·베이지", "연핑크"], ["그레이", "실버"], ["오렌지", "코랄·피치"], ["블랙", "네이비·블루"]]
 
 
 def nails(im: Image.Image, D, G, SP, SM) -> list[np.ndarray]:
@@ -65,7 +70,7 @@ def nails(im: Image.Image, D, G, SP, SM) -> list[np.ndarray]:
     return hulls
 
 
-def paint(rgb: np.ndarray, masks: list[np.ndarray], color: tuple[int, int, int]) -> np.ndarray:
+def paint(rgb: np.ndarray, masks: list[np.ndarray], color: tuple[int, int, int], metallic: bool = False, opacity: float = 1.0, gloss: float = 1.4) -> np.ndarray:
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB).astype(np.float32)
     tgt = cv2.cvtColor(np.uint8([[color]]), cv2.COLOR_RGB2LAB)[0, 0].astype(np.float32)
     out = lab.copy()
@@ -90,12 +95,16 @@ def paint(rgb: np.ndarray, masks: list[np.ndarray], color: tuple[int, int, int])
         u = ((xx - c[0]) * ax[0] + (yy - c[1]) * ax[1]) / half_l
         v = ((xx - c[0]) * side[0] + (yy - c[1]) * side[1]) / half_w
         band = np.exp(-((v - 0.35) / 0.13) ** 2) * np.clip(1 - np.abs(u) / 0.75, 0, 1) ** 0.7
-        newL = newL + band * (22 + 0.25 * (100 - tgt[0] * 100 / 255) * 2.55 * 0.4)
+        newL = newL + band * (22 + 0.25 * (100 - tgt[0] * 100 / 255) * 2.55 * 0.4) * gloss
+        if metallic:
+            # 금속: 조명 굴곡을 크게 키우고, 반대쪽에 어두운 반사 띠
+            dark = np.exp(-((v + 0.3) / 0.22) ** 2) * np.clip(1 - np.abs(u) / 0.9, 0, 1)
+            newL = tgt[0] + (shade - 1) * 160 + detail * 1.2 + band * 45 - dark * 70
         out[..., 0] = np.where(mu, newL, out[..., 0])
         out[..., 1] = np.where(mu, tgt[1], out[..., 1])
         out[..., 2] = np.where(mu, tgt[2], out[..., 2])
         A = np.maximum(A, mu.astype(np.float32))
-    A = cv2.GaussianBlur(A, (0, 0), 0.8)[..., None]
+    A = cv2.GaussianBlur(A, (0, 0), 0.8)[..., None] * opacity
     res = cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB).astype(np.float32)
     return (rgb * (1 - A) + res * A).astype(np.uint8)
 
@@ -108,6 +117,7 @@ def main() -> None:
     ap.add_argument("--colors", type=int, default=4, help="손마다 입힐 색 개수(짝)")
     ap.add_argument("--maxside", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--groups", action="store_true", help="손마다 헷갈리는 색 무리(GROUPS) 하나를 통째로 입힘")
     a = ap.parse_args()
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor, Sam2Model, Sam2Processor
     D = AutoProcessor.from_pretrained("IDEA-Research/grounding-dino-tiny")
@@ -144,9 +154,10 @@ def main() -> None:
         rgb = np.asarray(im)
         Image.fromarray((np.any(ms, 0) * 255).astype(np.uint8)).save(out / "masks" / f"{pid}.png")
         rng = random.Random(int(pid, 16))
-        for name in rng.sample(list(COLORS), a.colors):
+        names = GROUPS[n % len(GROUPS)] if a.groups else rng.sample(list(COLORS), a.colors)
+        for name in names:
             f = f"images/{pid}_{list(COLORS).index(name):02d}.jpg"
-            Image.fromarray(paint(rgb, ms, COLORS[name])).save(out / f, quality=92)
+            Image.fromarray(paint(rgb, ms, COLORS[name], name in METALLIC, OPACITY.get(name, 1.0))).save(out / f, quality=92)
             labels.write(json.dumps({"file": f, "mask": f"masks/{pid}.png", "nail.color": name, "nail.design": "원컬러", "pair": pid,
                                      "nails": len(ms), "pose": it.get("pose"), "source_sha256": it["sha256"]}, ensure_ascii=False) + "\n")
         labels.flush()
