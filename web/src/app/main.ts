@@ -1030,7 +1030,8 @@ function handPlacePlan(ink: InkMap, hand: { p: { x: number; y: number }[]; skin:
   const up = { x: (P[9].x - P[0].x) / L, y: (P[9].y - P[0].y) / L };
   const down = { x: -up.x, y: -up.y }, right = { x: -up.y, y: up.x };
   const limbW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y) * 0.9;
-  let h = L * 0.85 * (0.25 + 0.6 * tattoo.size), w = h * (tw / th);
+  // 크기 말에 비례: 미니(0.15) 손등 길이의 14%(손목 작은 하트가 손등 절반만 하게 구워졌다), 스몰 23%, 미디엄 39%, 대형 62%
+  let h = L * 0.85 * (0.05 + 0.75 * tattoo.size), w = h * (tw / th);
   if (w > limbW) { h *= limbW / w; w = limbW; }
   const along = Math.min(0.8, Math.max(0.2, tattoo.along ?? 0.5));
   const oc = Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)) * (limbW / 2);
