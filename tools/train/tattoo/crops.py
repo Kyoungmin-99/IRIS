@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from labels import drop_dense
+
 S = 256
 
 
@@ -32,7 +34,9 @@ def sources(a: argparse.Namespace):
             if "error" in m or m.get("split") != "train":
                 continue
             k = jf.stem
-            yield k, Image.open(lab / f"{k}.jpg").convert("RGB"), Image.open(lab / f"{k}_ink.png"), Image.open(lab / f"{k}_w.png")
+            ink, w = Image.open(lab / f"{k}_ink.png"), Image.open(lab / f"{k}_w.png")
+            w = Image.fromarray(drop_dense(m, np.asarray(ink) > 128, np.asarray(w) > 128).astype(np.uint8) * 255)
+            yield k, Image.open(lab / f"{k}.jpg").convert("RGB"), ink, w
     if a.comp:
         comp = Path(a.comp)
         for line in (comp / "labels.jsonl").read_text().splitlines():

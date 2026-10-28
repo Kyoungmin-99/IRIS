@@ -15,6 +15,8 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
+from labels import drop_dense
+
 
 def prob(sess: ort.InferenceSession, im: Image.Image) -> np.ndarray:
     W, H = im.size
@@ -46,14 +48,14 @@ def main() -> None:
             im = Image.open(lab / f"{k}.jpg").convert("RGB")
             p = prob(sess, im) > 0.5
             t = np.asarray(Image.open(lab / f"{k}_ink.png")) > 128
-            w = np.asarray(Image.open(lab / f"{k}_w.png")) > 128
+            w = drop_dense(m, t, np.asarray(Image.open(lab / f"{k}_w.png")) > 128)
             inbox = np.zeros_like(t)
             for r in m.get("regions", []):
                 x0, y0, x1, y1 = map(int, m["boxes"][r["box"]])
                 inbox[y0:y1 + 1, x0:x1 + 1] = True
             if m["kind"] == "arm":
                 arm_fa.append(float((p & w).mean()) > 0.002)
-            elif t.any():
+            elif (t & w).any():  # 정답 잉크가 모두 '모름'(가중 0)인 사진은 채점할 것이 없다(0점으로 세면 사진 평균이 거짓으로 낮아짐)
                 i, u = float((p & t & w).sum()), float(((p | t) & w).sum())
                 inter, union = inter + i, union + u
                 ious.append(i / max(u, 1))
