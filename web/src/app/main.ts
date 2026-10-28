@@ -466,7 +466,21 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
       });
       if (hi.scale > 1 || hi.src.inkProb) {
         const rc = r.tattooSrc.rect;
-        const t = tattooFromSource(hi.src, { x: rc.x * hi.scale, y: rc.y * hi.scale, w: rc.w * hi.scale, h: rc.h * hi.scale }, 1600);
+        let rect: { x: number; y: number; w: number; h: number } | null = { x: rc.x * hi.scale, y: rc.y * hi.scale, w: rc.w * hi.scale, h: rc.h * hi.scale };
+        // 처음 영역은 작은 그림에서 규칙만으로 골라, 잉크 모델이 확신한 잉크(0.6 넘음)의 절반 넘게가 그 밖에 있으면 모델을 넣어 다시 고른다:
+        // 옆구리 '가족' 글씨 사진에서 브라 테두리를 도안 영역으로 골라 글씨는 빠지고 테두리 막대가 구워졌다
+        const P = hi.src.inkProb;
+        if (P) {
+          let all = 0, inR = 0;
+          for (let y = 0; y < hi.src.h; y++) for (let x = 0; x < hi.src.w; x++) {
+            if (P[y * hi.src.w + x] <= 0.6) continue;
+            all++;
+            if (x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h) inR++;
+          }
+          if (all >= 40 && inR < all * 0.5) rect = null;
+          console.debug('[tattoo] 모델 확신 잉크', { all, inR, repick: !rect });
+        }
+        const t = tattooFromSource(hi.src, rect, 1600);
         if (t) {
           r.tattoo = t.design;
           r.tattooSrc = { src: hi.src, rect: t.rect, inkMask: t.inkMask, paper: r.tattooSrc.paper };

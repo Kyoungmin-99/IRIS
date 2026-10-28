@@ -562,6 +562,16 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
     for (let i = 0; i < n; i++) grown[i] = grown[i] > 0.05 ? 1 : 0;
     interior = boxBlur(grown, w, h, Math.max(3, short * 0.04));
   }
+  // 잉크 모델이 확신하는 잉크(0.6 넘음)가 사진의 0.01% · 40px 넘게 있으면 그 근처(짧은 변 2%) 잉크만 남기고 거르기도 풀지 않는다:
+  // 손목 작은 하트 사진에서 손목·손 주름 그늘이 넓게 함께 뽑혀 손등에 놓을 때 하트가 점만 하게 줄었다(하트 298px, 주름은 모델 0).
+  // 모델이 거의 못 잡는 굵은 먹 십자가(4px)는 지금처럼 규칙과 거르기 풀기로
+  let nearSure: Float32Array | null = null;
+  if (P) {
+    const sure = new Float32Array(n);
+    let cnt = 0;
+    for (let i = 0; i < n; i++) if (P[i] > 0.6) { sure[i] = 1; cnt++; }
+    if (cnt >= Math.max(40, n * 1e-4)) nearSure = boxBlur(sure, w, h, Math.max(2, short * 0.02));
+  }
   for (let gate = 1; gate >= 0; gate--) {
     let sumG = 0, sumR = 0;
     for (let y = 0; y < oh; y++) {
@@ -578,7 +588,8 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
         // 피부가 아닌 곳(옷·머리카락·배경)은 도안이 아니다
         const onSkin = Math.max(src.avoid ? 1 - smooth(0.3, 0.6, src.avoid[i]) : 1, src.inkProb ? smooth(0.4, 0.7, src.inkProb[i]) : 0);
         const a0 = Math.max(dark, tint * 0.8) * onSkin;
-        const a = gate ? a0 * Math.max(smooth(0, 0.04, inkNear[i]), P ? smooth(0.3, 0.6, P[i]) : 0) : interior ? a0 * smooth(0.85, 0.98, interior[i]) : a0;
+        const rule = smooth(0, 0.04, inkNear[i]) * (nearSure ? smooth(0.002, 0.02, nearSure[i]) : 1);
+        const a = gate ? a0 * Math.max(rule, P ? smooth(0.3, 0.6, P[i]) : 0) : interior ? a0 * smooth(0.85, 0.98, interior[i]) : a0;
         sumG += a;
         sumR += a0;
         inkMask[i] = a;
@@ -588,7 +599,7 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
         full[o + 3] = a;
       }
     }
-    if (sumG >= sumR * 0.3) break;
+    if (sumG >= sumR * 0.3 || nearSure) break;
   }
   // 옷 곁(짧은 변 2%): 옷 밑단 그늘 조각 가려내기용
   let cloth: Float32Array | undefined;
