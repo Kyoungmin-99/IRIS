@@ -14,6 +14,7 @@ torch.set_num_threads(int(os.environ.get('THREADS', '3')))
 ap = argparse.ArgumentParser()
 ap.add_argument('--pc', default='/tmp/claude-0/pc', help='photo-collection 을 푼 폴더')
 ap.add_argument('--out', default='/tmp/claude-0/teach/lab')
+ap.add_argument('--collect', default='/tmp/claude-0/collect', help='직접 모은 사진 폴더(tools/collect 출력)')
 ap.add_argument('--holdout', default='/tmp/claude-0/inkeval/holdout_neg.txt', help='시험 전용 맨살 팔 목록(한 줄에 경로 하나)')
 A = ap.parse_args()
 OUT, PC = A.out, A.pc
@@ -31,6 +32,9 @@ def sources():
             p = os.path.join(os.path.dirname(mf), it['file'])
             if os.path.exists(p): L.append((p, 'arm_tat' if it.get('has_tattoo') else 'arm', 'eval' if (p in hold or it.get('has_tattoo')) else 'train'))
     L += [(p, 'hand', 'train') for p in sorted(glob.glob(f'{PC}/collections/hands-2026-10-26/*/*.jpg'))]
+    # 직접 모은 사진(tools/collect: 커먼즈 등, 라이선스 기록 있음). 10장에 1장은 시험 전용
+    web = sorted(glob.glob(f'{A.collect}/*/images/*'))
+    L += [(p, 'web', 'eval' if int(hashlib.sha1(p.encode()).hexdigest(), 16) % 10 == 0 else 'train') for p in web]
     return L
 
 D = AutoProcessor.from_pretrained('IDEA-Research/grounding-dino-tiny')
