@@ -473,7 +473,8 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
         if (P) {
           let all = 0, inR = 0;
           for (let y = 0; y < hi.src.h; y++) for (let x = 0; x < hi.src.w; x++) {
-            if (P[y * hi.src.w + x] <= 0.6) continue;
+            // 피부 위만 센다: 입술 타투 사진에서 파란 바지 허리밴드 가장자리를 모델이 잉크로 확신해 영역을 밴드로 다시 골랐다
+            if (P[y * hi.src.w + x] <= 0.6 || hi.src.skin[y * hi.src.w + x] < 0.5) continue;
             all++;
             if (x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h) inR++;
           }
