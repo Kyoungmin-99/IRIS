@@ -36,11 +36,11 @@ test('upsample: 상수는 상수로, 시그모이드 적용', () => {
   assert.ok(u.every((v) => Math.abs(v - 0.5) < 1e-9));
 });
 
-test('tattooInkProb: 실행기 입력은 8의 배수 NCHW, 출력은 원래 크기 확률', async () => {
+test('tattooInkProb: 실행기 입력은 16의 배수 NCHW(5단계 U-Net), 출력은 원래 크기 확률', async () => {
   let dims: number[] = [];
   const runner = { run: async (t: { data: Float32Array; dims: number[] }) => { dims = t.dims; return { data: new Float32Array(t.dims[2] * t.dims[3]).fill(10), dims: [1, 1, t.dims[2], t.dims[3]] }; } };
   const p = await tattooInkProb(img(30, 20, () => [10, 10, 10]), runner, 768);
-  assert.deepEqual(dims, [1, 3, 24, 32]);
+  assert.deepEqual(dims, [1, 3, 32, 32]);
   assert.equal(p.length, 600);
   assert.ok(p[0] > 0.99);
 });

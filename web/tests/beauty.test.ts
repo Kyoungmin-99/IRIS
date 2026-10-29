@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { bandMesh, faceRegions, strokeStrip, triangulate, LIPS_OUTER } from '../src/beauty/face-regions.ts';
 import { LOOKS, PALETTES } from '../src/beauty/palettes.ts';
 import { measureLimbWidth, placeFromPoint, tattooMesh, type PosePoints } from '../src/beauty/tattoo-place.ts';
-import { colorSkin, denseSleeve, dropEdgeBits, extractDesign, isDesignSheet, neutralInk, proposeRect, sheetRect, sleeveInk } from '../src/beauty/tattoo-extract.ts';
+import { colorSkin, denseSleeve, dropEdgeBits, extractDesign, isDesignSheet, neutralInk, proposeRect, sheetRect, sleeveInk, sureRect } from '../src/beauty/tattoo-extract.ts';
 
 type P = { x: number; y: number };
 const area = (pts: P[], tris: number[]): number => {
@@ -556,4 +556,18 @@ test('입술 클로즈업: 사진 가장자리를 덮은 아주 진한 빨간 �
   // 배경만 있고 립이 없으면 없음
   for (let i = 0; i < w * h; i++) d.set([210, 22, 24, 255], i * 4);
   assert.equal(lipCloseup(d, w, h), null);
+});
+
+test('확신 잉크 영역(sureRect): 옷 위 확신 잉크는 빼고, 확신 잉크가 가장 많은 무리를 감싼다', () => {
+  const w = 200, h = 200;
+  const d = new Uint8ClampedArray(w * h * 4);
+  const skin = new Float32Array(w * h).fill(1);
+  const avoid = new Float32Array(w * h);
+  const inkProb = new Float32Array(w * h);
+  // 피부 위 세로 막대(십자가 몸통) 하나 + 옷(avoid=1) 위 더 큰 띠(허리밴드 가장자리)
+  for (let y = 40; y < 160; y++) for (let x = 60; x < 70; x++) inkProb[y * w + x] = 0.9;
+  for (let y = 170; y < 200; y++) for (let x = 0; x < 200; x++) { avoid[y * w + x] = 1; skin[y * w + x] = 0; inkProb[y * w + x] = 0.9; }
+  const r = sureRect({ w, h, d, skin, avoid, inkProb })!;
+  assert.ok(r && r.x < 60 && r.x + r.w > 70 && r.y < 40 && r.y + r.h > 159 && r.y + r.h < 170, `영역 ${JSON.stringify(r)}`);
+  assert.equal(sureRect({ w, h, d, skin }), null);
 });

@@ -322,6 +322,42 @@ export function proposeRect(src: InkSource, found = findInk(src)): Rect | null {
   return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
+/** 잉크 모델이 확신한 잉크(0.6 넘음, 옷·머리카락·배경 위는 뺌)를 짧은 변 2% 넓혀 묶어, 확신 잉크가 가장 많은 무리를 감싸는 영역. 없으면 null.
+ * 굵은 먹 십자가는 막대가 피부 구멍이라 규칙 잉크가 가장자리에만 생겨 proposeRect 가 가로대 조각만 골랐다 */
+export function sureRect(src: InkSource): Rect | null {
+  const P = src.inkProb;
+  if (!P) return null;
+  const { w, h } = src;
+  const short = Math.min(w, h);
+  const sure = new Uint8Array(w * h);
+  const f = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) if (P[i] > 0.6 && (!src.avoid || src.avoid[i] < 0.5)) { sure[i] = 1; f[i] = 1; }
+  const grown = boxBlur(f, w, h, Math.max(2, short * 0.02));
+  const gm = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) gm[i] = grown[i] > 0 ? 1 : 0;
+  const { lab, n } = label(gm, w, h);
+  const amt = new Int32Array(n + 1);
+  for (let i = 0; i < w * h; i++) if (sure[i]) amt[lab[i]]++;
+  let best = 0;
+  for (let c = 1; c <= n; c++) if (amt[c] > amt[best]) best = c;
+  if (!best || amt[best] < 40) return null;
+  let x0 = w, y0 = h, x1 = 0, y1 = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (!sure[i] || lab[i] !== best) continue;
+    const x = i % w, y = (i / w) | 0;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  }
+  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.06) + 2;
+  x0 = Math.max(0, x0 - pad);
+  y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(w - 1, x1 + pad);
+  y1 = Math.min(h - 1, y1 + pad);
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
 /** 도안 시트인가: 한 장에 도안 수십 개가 빽빽한 플래시 시트. 잉크를 2% 넓히면 전부 한 덩어리(그림의 절반 넘게)인데
  * 0.8% 만 넓히면 여섯 덩어리 넘게 갈라진다. 또는 도안이 띄엄띄엄 놓여 2% 넓혀도 큰 덩어리 다섯 개 넘게 따로 선다. 그중 하나를 자동으로 고르면 색 채움이 잉크로 안 잡혀 조각난 도안이 되므로,
  * 시트 전체를 한 작품(긴팔·등판처럼)으로 크게 감아 입히고 하나만 쓰려면 사용자가 ✂️ 로 고르게 한다 */
@@ -572,6 +608,20 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
     for (let i = 0; i < n; i++) if (P[i] > 0.6) { sure[i] = 1; cnt++; }
     if (cnt >= Math.max(40, n * 1e-4)) nearSure = boxBlur(sure, w, h, Math.max(2, short * 0.02));
   }
+  // 확신 잉크와 이어진 잉크 덩어리는 통째로 '근처': 굵은 먹 십자가 세로 막대 가운데서 모델 확률이 0.34~0.46 으로 내려가
+  // 확신 잉크(0.6 넘음)가 반경 밖이 되자 규칙 잉크까지 잘려 하얀 틈이 났다. 손목 주름 그늘은 떨어진 덩어리라 그대로 걸러진다
+  if (nearSure && P) {
+    // 덩어리는 규칙 잉크 + 모델이 반쯤(0.3 넘게) 잉크로 본 곳: 막대 가운데(규칙 잉크 없음)로도 이어지게
+    const m = new Uint8Array(n);
+    for (let i = 0; i < n; i++) m[i] = found.ink[i] || P[i] > 0.3 ? 1 : 0;
+    const { lab, n: nc } = label(m, w, h);
+    const hit = new Uint8Array(nc + 1);
+    for (let i = 0; i < n; i++) if (lab[i] && P[i] > 0.6) hit[lab[i]] = 1;
+    const linked = new Float32Array(n);
+    for (let i = 0; i < n; i++) if (hit[lab[i]]) linked[i] = 1;
+    const near = boxBlur(linked, w, h, Math.max(2, short * 0.015));
+    for (let i = 0; i < n; i++) if (near[i] > 0) nearSure[i] = Math.max(nearSure[i], 0.05); // Float32 에 0.02 를 넣으면 0.0199… 라 아래 >= 0.02 를 못 넘는다
+  }
   for (let gate = 1; gate >= 0; gate--) {
     let sumG = 0, sumR = 0;
     for (let y = 0; y < oh; y++) {
@@ -589,7 +639,9 @@ export function extractDesign(src: InkSource, rect?: Rect | null, maxSide = 512)
         const onSkin = Math.max(src.avoid ? 1 - smooth(0.3, 0.6, src.avoid[i]) : 1, src.inkProb ? smooth(0.4, 0.7, src.inkProb[i]) : 0);
         const a0 = Math.max(dark, tint * 0.8) * onSkin;
         const rule = smooth(0, 0.04, inkNear[i]) * (nearSure ? smooth(0.002, 0.02, nearSure[i]) : 1);
-        const a = gate ? a0 * Math.max(rule, P ? smooth(0.3, 0.6, P[i]) : 0) : interior ? a0 * smooth(0.85, 0.98, interior[i]) : a0;
+        // 확신 잉크와 이어진 곳은 모델 확률이 낮아도(0.1~0.3) 잉크: 굵은 먹 막대 가운데는 규칙 잉크가 없고(피부 구멍) 확률이 0.34~0.46 이라 반쯤 지워졌다
+        const pTerm = P ? (nearSure && nearSure[i] >= 0.02 ? smooth(0.1, 0.3, P[i]) : smooth(0.3, 0.6, P[i])) : 0;
+        const a = gate ? a0 * Math.max(rule, pTerm) : interior ? a0 * smooth(0.85, 0.98, interior[i]) : a0;
         sumG += a;
         sumR += a0;
         inkMask[i] = a;

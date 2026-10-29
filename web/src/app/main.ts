@@ -38,7 +38,7 @@ import { growNailMask, hullFill, maskContrast, nailFrame, nailSkinFraction, rimC
 import { samImage, type SamImage } from '../beauty/sam.ts';
 import { fillPoly, swapFace } from '../beauty/face-swap.ts';
 import { transferMakeup, type MakeupAmounts } from '../beauty/still-makeup.ts';
-import { denseSleeve, extractDesign, findInk, isDesignSheet, sheetRect, sleeveInk, type InkSource, neutralInk } from '../beauty/tattoo-extract.ts';
+import { denseSleeve, extractDesign, findInk, isDesignSheet, sheetRect, sleeveInk, sureRect, type InkSource, neutralInk } from '../beauty/tattoo-extract.ts';
 import { affine3, armStrip, chestInkScale, inkOnArm, limbRegion, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, transferTorsoInk, type Arm, type InkMap, type Strip } from '../beauty/still-tattoo.ts';
 import { nailQuads } from '../beauty/nail-place.ts';
 import { handBackSkin } from '../core/hand-skin.ts';
@@ -478,8 +478,9 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
             all++;
             if (x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h) inR++;
           }
-          if (all >= 40 && inR < all * 0.5) rect = null;
-          console.debug('[tattoo] 모델 확신 잉크', { all, inR, repick: !rect });
+          // 다시 고를 때는 확신 잉크 무리를 감싼 영역(없으면 자동): 규칙 자동 영역은 굵은 먹 십자가(막대가 피부 구멍)에서 가로대 조각만 골랐다
+          if (all >= 40 && inR < all * 0.5) rect = sureRect(hi.src);
+          console.debug('[tattoo] 모델 확신 잉크', { all, inR, rect });
         }
         const t = tattooFromSource(hi.src, rect, 1600);
         if (t) {
