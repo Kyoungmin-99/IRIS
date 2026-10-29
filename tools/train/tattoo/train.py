@@ -67,6 +67,7 @@ def main() -> None:
     ap.add_argument("--data", nargs="+", default=["data"], help="자료 폴더(여럿 가능, '폴더:반복 수')")
     ap.add_argument("--out", default="out")
     ap.add_argument("--epochs", type=int, default=12)
+    ap.add_argument("--steps", type=int, default=0, help="이 배치 수에서 멈춤(0 = 끝까지). 컨테이너가 자주 다시 시작돼 1에포크(약 1,700 배치)를 못 마쳐 점수가 안 나왔다")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--ch", default="", help="단계별 채널(예: 16,32,64,128,256). 비우면 저장본과 같게(없으면 4단계)")
@@ -92,7 +93,8 @@ def main() -> None:
         model = load_unet(torch.load(a.resume, map_location="cpu"), ch)
         print(f"이어서 학습: {a.resume}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.epochs * len(dl))
+    total = a.epochs * len(dl) if not a.steps else min(a.steps, a.epochs * len(dl))
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=total)
     out = Path(a.out)
     (out / "samples").mkdir(parents=True, exist_ok=True)
     best = 0.0
@@ -124,6 +126,8 @@ def main() -> None:
                 torch.save(model.state_dict(), out / "last.pt")
                 saved = time.time()
                 print(f"  {step} 배치 저장 (손실 {tot / ((step - 1) % len(dl) + 1):.3f})", flush=True)
+            if step >= total:
+                break
         model.eval()
         inter = union = 0.0
         with torch.no_grad():
@@ -135,7 +139,7 @@ def main() -> None:
                 if k == 0:
                     save_samples(x, y, p, out / "samples" / f"ep{ep + 1:03d}.png")
         iou = inter / max(union, 1)
-        print(f"[{ep + 1}/{a.epochs}] 손실 {tot / len(dl):.3f}  검증 IoU {iou:.3f}", flush=True)
+        print(f"[{ep + 1}/{a.epochs}] 손실 {tot / max(1, (step - 1) % len(dl) + 1):.3f}  검증 IoU {iou:.3f}", flush=True)
         if iou > best:
             best = iou
             torch.save(model.state_dict(), out / "best.pt")
