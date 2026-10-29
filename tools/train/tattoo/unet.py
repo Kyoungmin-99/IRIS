@@ -41,3 +41,38 @@ def load(state: dict, ch: tuple[int, ...] | None = None) -> UNet:
             mine[k2] = v
     model.load_state_dict(mine)
     return model
+
+
+def from_onnx(path: str, calib: float = 0.5) -> UNet:
+    """앱 ONNX(export.py 출력)에서 가중치 되살리기: 저장본(.pt)이 사라졌을 때(컨테이너 교체) 이어 학습하려고.
+    내보낼 때 BatchNorm 이 합성곱에 접혀 있어 BN 은 항등(평균 0·분산 1)으로 두므로 train.py --freeze-bn 으로 이어 학습한다.
+    calib: export.py --calib 로 뺀 log(p/(1-p)) 를 머리 bias 에 되돌림"""
+    import math
+
+    import onnx
+    from onnx import numpy_helper
+
+    m = onnx.load(path)
+    W = {i.name: numpy_helper.to_array(i) for i in m.graph.initializer}
+    convs = [n for n in m.graph.node if n.op_type in ("Conv", "ConvTranspose")]
+    k = sum(1 for n in convs if n.op_type == "ConvTranspose")  # 위로 올라가는 단계 수 = 단계 수 - 1
+    ch = tuple(int(W[convs[2 * i].input[1]].shape[0]) for i in range(k + 1))
+    model = UNet(ch)
+    mods = [mm for i in range(k + 1) for mm in (model.enc[i][0], model.enc[i][3])]
+    mods += [mm for j in range(k) for mm in (model.up[j], model.dec[j][0], model.dec[j][3])] + [model.head]
+    assert len(convs) == len(mods), (len(convs), len(mods))
+    for n, mod in zip(convs, mods):
+        w = W[n.input[1]]
+        assert tuple(w.shape) == tuple(mod.weight.shape), (n.name, w.shape, tuple(mod.weight.shape))
+        mod.weight.data = torch.from_numpy(w.copy())
+        if len(n.input) > 2:
+            mod.bias.data = torch.from_numpy(W[n.input[2]].copy())
+    for mm in model.modules():
+        if isinstance(mm, torch.nn.BatchNorm2d):
+            mm.weight.data.fill_(1)
+            mm.bias.data.zero_()
+            mm.running_mean.zero_()
+            mm.running_var.fill_(1 - mm.eps)
+    if calib != 0.5:
+        model.head.bias.data += math.log(calib / (1 - calib))
+    return model

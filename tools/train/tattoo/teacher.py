@@ -12,7 +12,7 @@ from PIL import Image
 from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModel, Sam2Model, Sam2Processor
 torch.set_num_threads(int(os.environ.get('THREADS', '3')))
 ap = argparse.ArgumentParser()
-ap.add_argument('--pc', default='/tmp/claude-0/pc', help='photo-collection 을 푼 폴더')
+ap.add_argument('--pc', default='/home/user/finde-photos', help='FINDE-photos 를 받은 폴더(collections · dot-candidates)')
 ap.add_argument('--out', default='/tmp/claude-0/teach/lab')
 ap.add_argument('--collect', default='/tmp/claude-0/collect', help='직접 모은 사진 폴더(tools/collect 출력)')
 ap.add_argument('--holdout', default='/tmp/claude-0/inkeval/holdout_neg.txt', help='시험 전용 맨살 팔 목록(한 줄에 경로 하나)')
@@ -25,16 +25,18 @@ def sources():
     ev = set(tat[::4])  # inkeval/eval.py 가 쓰는 타투 사진(4장에 1장) → 시험 전용
     L = [(p, 'tat', 'eval' if p in ev else 'train') for p in tat]
     L += [(p, 'tat', 'train') for p in sorted(glob.glob(f'{PC}/collections/style_kr-2026-10-27/tattoo/*'))]
-    hold = set(l for l in open(A.holdout).read().split('\n') if l)
+    # 시험 전용 맨살 팔: 목록 파일이 없으면(컨테이너가 바뀌어 사라짐) 파일 이름 해시로 4장에 1장 — 다시 만들어도 같은 사진
+    hold = set(l for l in open(A.holdout).read().split('\n') if l) if os.path.exists(A.holdout) else None
     for mf in sorted(glob.glob(f'{PC}/dot-candidates/dot-arms-*/*.json')):
         d = json.load(open(mf)); items = d['items'] if isinstance(d, dict) and 'items' in d else (d if isinstance(d, list) else d.get('candidates', []))
         for it in items:
             p = os.path.join(os.path.dirname(mf), it['file'])
-            if os.path.exists(p): L.append((p, 'arm_tat' if it.get('has_tattoo') else 'arm', 'eval' if (p in hold or it.get('has_tattoo')) else 'train'))
+            held = p in hold if hold is not None else int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 4 == 0
+            if os.path.exists(p): L.append((p, 'arm_tat' if it.get('has_tattoo') else 'arm', 'eval' if (held or it.get('has_tattoo')) else 'train'))
     L += [(p, 'hand', 'train') for p in sorted(glob.glob(f'{PC}/collections/hands-2026-10-26/*/*.jpg'))]
     # 직접 모은 사진(tools/collect: 커먼즈 등, 라이선스 기록 있음). 10장에 1장은 시험 전용
     web = sorted(glob.glob(f'{A.collect}/*/images/*'))
-    L += [(p, 'web', 'eval' if int(hashlib.sha1(p.encode()).hexdigest(), 16) % 10 == 0 else 'train') for p in web]
+    L += [(p, 'web', 'eval' if int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 10 == 0 else 'train') for p in web]
     return L
 
 D = AutoProcessor.from_pretrained('IDEA-Research/grounding-dino-tiny')

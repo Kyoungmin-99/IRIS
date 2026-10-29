@@ -71,6 +71,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--ch", default="", help="단계별 채널(예: 16,32,64,128,256). 비우면 저장본과 같게(없으면 4단계)")
+    ap.add_argument("--freeze-bn", action="store_true", help="BatchNorm 을 고정(평가 상태). 앱 ONNX 에서 되살린 가중치는 BN 이 합성곱에 접혀 있어(항등 BN) 학습 중 배치 통계로 바꾸면 출력이 무너진다")
     ap.add_argument("--resume", default="", help="이어서 학습할 가중치(best.pt). 컨테이너가 다시 시작되면 학습이 끊긴다")
     a = ap.parse_args()
     random.seed(0)
@@ -104,6 +105,12 @@ def main() -> None:
     t0 = saved = time.time()
     for ep in range(a.epochs):
         model.train()
+        if a.freeze_bn:
+            for m in model.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()
+                    m.weight.requires_grad_(False)
+                    m.bias.requires_grad_(False)
         tot = 0.0
         for x, y, w in dl:
             logit = model(x)
