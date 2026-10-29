@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import argparse
 import math
-import sys
-from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nail"))
-from train import UNet  # noqa: E402
+from unet import load  # noqa: E402
 
 S = 256
 
@@ -26,8 +23,7 @@ def main() -> None:
     ap.add_argument("--calib", type=float, default=0.5)
     a = ap.parse_args()
     src, dst = a.src, a.dst
-    model = UNet()
-    model.load_state_dict(torch.load(src, map_location="cpu"))
+    model = load(torch.load(src, map_location="cpu"))
     model.eval()
     if a.calib != 0.5:
         with torch.no_grad():

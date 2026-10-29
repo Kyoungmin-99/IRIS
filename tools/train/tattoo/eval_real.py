@@ -20,7 +20,7 @@ from labels import drop_dense
 
 def prob(sess: ort.InferenceSession, im: Image.Image) -> np.ndarray:
     W, H = im.size
-    pw, ph = (W + 7) // 8 * 8, (H + 7) // 8 * 8
+    pw, ph = (W + 15) // 16 * 16, (H + 15) // 16 * 16  # 5단계 모델은 16의 배수
     x = np.zeros((1, 3, ph, pw), np.float32)
     x[0, :, :H, :W] = np.asarray(im, np.float32).transpose(2, 0, 1) / 255
     y = sess.run(None, {sess.get_inputs()[0].name: x})[0][0, 0, :H, :W]

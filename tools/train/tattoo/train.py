@@ -21,6 +21,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nail"))
 from train import UNet  # noqa: E402  손톱 모델과 같은 작은 U-Net
+from unet import load as load_unet  # noqa: E402
 
 S = 256
 
@@ -68,6 +69,7 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--ch", default="", help="단계별 채널(예: 16,32,64,128,256). 비우면 저장본과 같게(없으면 4단계)")
     ap.add_argument("--resume", default="", help="이어서 학습할 가중치(best.pt). 컨테이너가 다시 시작되면 학습이 끊긴다")
     a = ap.parse_args()
     random.seed(0)
@@ -84,9 +86,10 @@ def main() -> None:
     print(f"학습 {len(tr)}장, 검증 {len(val)}장", flush=True)
     dl = torch.utils.data.DataLoader(InkData(tr, True), batch_size=a.batch, shuffle=True, num_workers=2, drop_last=True)
     dv = torch.utils.data.DataLoader(InkData(val, False), batch_size=a.batch, shuffle=False, num_workers=1)
-    model = UNet()
+    ch = tuple(int(c) for c in a.ch.split(",")) if a.ch else None
+    model = UNet(ch) if ch else UNet()
     if a.resume:
-        model.load_state_dict(torch.load(a.resume, map_location="cpu"))
+        model = load_unet(torch.load(a.resume, map_location="cpu"), ch)
         print(f"이어서 학습: {a.resume}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.epochs * len(dl))
