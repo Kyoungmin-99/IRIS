@@ -44,7 +44,8 @@ PY
   D="$W/tatdata3s"
   [ -d $W/tatcompc ] && D="$D $W/tatcompc"
   [ -d $W/tatreal ] && D="$D $W/tatreal:2"
-  [ -d $W/tatneg ] && D="$D $W/tatneg:2"
+  # 잉크 없음 ×4: ×2 일 때 실제 점수는 앱보다 높아도 맨살 팔 오검출이 38장 중 2 → 5장으로 늘었다
+  [ -d $W/tatneg ] && D="$D $W/tatneg:4"
   RES=$O/last.pt
   if [ ! -f $RES ]; then
     python3 -c "import sys, torch; sys.path.insert(0, '$T'); from unet import from_onnx; torch.save(from_onnx('$APP', 0.85).state_dict(), '$O/from_app.pt')" && log "앱 ONNX 에서 가중치 되살림"
