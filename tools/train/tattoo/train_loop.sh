@@ -32,7 +32,18 @@ for mf in sorted(glob.glob(f'{fp}/dot-candidates/dot-arms-*/*.json')):
         # teacher.py 와 같은 시험 전용 규칙(이름 해시 4장에 1장)은 빼고
         if os.path.exists(p) and not it.get('has_tattoo') and int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 4:
             out.append(p)
-out += sorted(glob.glob(f'{w}/collect/openimages_neg/images/*'))
+# Open Images 타투 없는 사진: 사람 확인 '타투 없음'이 아닌 갈래 몫 사진에는 선생님이 잉크를 붙인 것이 있다(1,233장 중 126장).
+# 그 사진이 실제 사진 조각(잉크)과 잉크 없음 조각(잉크 0)에 함께 들어가 서로 반대 정답이 됐다 → 선생님 정답이 train 이고 잉크가 없는 것만
+# (시험 전용 eval 사진도 여기로 새고 있었다)
+import numpy as np
+from PIL import Image
+lab = f'{w}/teach/lab'
+for jf in sorted(glob.glob(f'{lab}/*.json')):
+    m = json.load(open(jf))
+    if 'openimages_neg/' not in m.get('src', '') or 'error' in m or m.get('split') != 'train' or not os.path.exists(m['src']):
+        continue
+    if (np.asarray(Image.open(jf[:-5] + '_ink.png')) > 128).mean() <= 0.002:
+        out.append(m['src'])
 print('\n'.join(out))
 PY
   nn=$(wc -l < $W/neg_list.new)
