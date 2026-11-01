@@ -44,8 +44,9 @@ PY
   D="$W/tatdata3s"
   [ -d $W/tatcompc ] && D="$D $W/tatcompc"
   [ -d $W/tatreal ] && D="$D $W/tatreal:2"
-  # 잉크 없음 ×4: ×2 일 때 실제 점수는 앱보다 높아도 맨살 팔 오검출이 38장 중 2 → 5장으로 늘었다
-  [ -d $W/tatneg ] && D="$D $W/tatneg:4"
+  # 잉크 없음 ×2: ×2(사진 763장) 때 맨살 팔 오검출이 2 → 5장이라 ×4 로 올렸지만, 사진이 1,300장을 넘은 뒤 ×4 는
+  # 바퀴마다 잉크를 덜 잡아 IoU 가 0.53 → 0.44 로 떨어졌다(상자 밖 오검출 37 → 18%) → 앱 가중치에서 ×2 로 다시(첫 바퀴 IoU 0.50 · 맨살 팔 3장, 아직 앱 0.538 아래). NEGX 로 바꿔 시험
+  [ -d $W/tatneg ] && D="$D $W/tatneg:${NEGX:-2}"
   RES=$O/last.pt
   if [ ! -f $RES ]; then
     python3 -c "import sys, torch; sys.path.insert(0, '$T'); from unet import from_onnx; torch.save(from_onnx('$APP', 0.85).state_dict(), '$O/from_app.pt')" && log "앱 ONNX 에서 가중치 되살림"
