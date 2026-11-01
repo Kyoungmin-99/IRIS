@@ -70,6 +70,7 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=0, help="이 배치 수에서 멈춤(0 = 끝까지). 컨테이너가 자주 다시 시작돼 1에포크(약 1,700 배치)를 못 마쳐 점수가 안 나왔다")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--step0", type=int, default=0, help="이 바퀴에서 이미 한 배치 수(컨테이너 재시작 뒤 이어 하기). 저장할 때 step0+한 배치를 out/round_steps 에 적는다")
     ap.add_argument("--ch", default="", help="단계별 채널(예: 16,32,64,128,256). 비우면 저장본과 같게(없으면 4단계)")
     ap.add_argument("--freeze-bn", action="store_true", help="BatchNorm 을 고정(평가 상태). 앱 ONNX 에서 되살린 가중치는 BN 이 합성곱에 접혀 있어(항등 BN) 학습 중 배치 통계로 바꾸면 출력이 무너진다")
     ap.add_argument("--resume", default="", help="이어서 학습할 가중치(best.pt). 컨테이너가 다시 시작되면 학습이 끊긴다")
@@ -131,6 +132,7 @@ def main() -> None:
             if time.time() - saved > 300:
                 # 컨테이너가 자주(40분 안팎) 다시 시작돼 에포크·100 배치 단위로 저장하면 계속 날아갔다: 5분마다 가중치 저장
                 torch.save(model.state_dict(), out / "last.pt")
+                (out / "round_steps").write_text(str(a.step0 + step))
                 saved = time.time()
                 print(f"  {step} 배치 저장 (손실 {tot / ((step - 1) % len(dl) + 1):.3f})", flush=True)
             if step >= total:
