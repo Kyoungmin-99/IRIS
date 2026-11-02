@@ -65,7 +65,7 @@ PY
   fi
   # 합성만으로 학습하면 실제 사진 점수가 떨어진다(합성 IoU ≠ 실제): 실제 사진 조각이 생길 때까지 기다림
   if [ ! -d $W/tatreal ] || [ ! -d $W/tatdata3s/masks ] || [ $(ls $W/tatdata3s/masks | wc -l) -lt 1000 ]; then sleep 300; continue; fi
-  # 컨테이너가 재시작되면 바퀴가 0 배치부터 다시 돌아 600 배치를 못 채우고 점수가 안 나왔다: 이 바퀴에서 이미 한 배치(5분마다 저장)를 빼고 나머지만
+  # 컨테이너가 재시작되면 바퀴가 0 배치부터 다시 돌아 600 배치를 못 채우고 점수가 안 나왔다: 이 바퀴에서 이미 한 배치(90초마다 저장)를 빼고 나머지만
   done_n=$(cat $O/round_steps 2> /dev/null || echo 0)
   left=$((600 - done_n)); [ $left -lt 60 ] && left=60
   python3 train.py --data $D --out $O --epochs 1 --steps $left --step0 $done_n --lr 2e-4 --ch 16,32,64,128,256 --freeze-bn --resume $RES >> $W/tattrain.log 2>&1 || { sleep 60; continue; }

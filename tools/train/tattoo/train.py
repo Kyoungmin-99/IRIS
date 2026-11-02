@@ -129,8 +129,8 @@ def main() -> None:
             step += 1
             if step % 20 == 0:
                 print(f"  {step} 배치 ({(time.time() - t0) / step:.1f}초/배치)", flush=True)
-            if time.time() - saved > 300:
-                # 컨테이너가 자주(40분 안팎) 다시 시작돼 에포크·100 배치 단위로 저장하면 계속 날아갔다: 5분마다 가중치 저장
+            if time.time() - saved > 90:
+                # 컨테이너가 자주 다시 시작돼(차례가 끝나면 4~5분 안에 잠듦) 5분마다 저장하면 120 배치 안팎이 계속 날아갔다: 90초마다 가중치 저장
                 torch.save(model.state_dict(), out / "last.pt")
                 (out / "round_steps").write_text(str(a.step0 + step))
                 saved = time.time()
