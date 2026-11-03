@@ -26,7 +26,7 @@ def sources():
     L = [(p, 'tat', 'eval' if p in ev else 'train') for p in tat]
     L += [(p, 'tat', 'train') for p in sorted(glob.glob(f'{PC}/collections/style_kr-2026-10-27/tattoo/*'))]
     # 코덱스 요청 11(약한 유형: 일상 스냅 · 작은 · 어두운 · 컬러) · 요청 3/8(실제 타투) 묶음: 약한 유형 점수를 따로 재도록 이름 해시로 2장에 1장 시험 전용
-    for p in sorted(glob.glob(f'{PC}/collections/tattoo_weak-*/images/*') + glob.glob(f'{PC}/collections/tattoo_real-*/*/*')):
+    for p in sorted(glob.glob(f'{PC}/collections/tattoo_weak*-*/images/*') + glob.glob(f'{PC}/collections/tattoo_real-*/*/*')):
         if p.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
             L.append((p, 'tat', 'eval' if int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 2 == 0 else 'train'))
     # 코덱스 요청 7(타투로 잘못 읽히는 맨살): 맨살 팔과 같이(시험 전용이면 오검출로 채점)
