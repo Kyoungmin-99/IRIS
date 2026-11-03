@@ -67,7 +67,14 @@ fi
 if ! running "[t]eacher.py"; then
   (cd $T && THREADS=3 setsid nohup python3 teacher.py --pc $FP --collect $C --out $W/teach/lab >> $W/teach/label.log 2>&1 < /dev/null &)
 fi
-# 7) 학습 순환
+# 7) 디스크 정리(매번): 다시 받을 수 있는 캐시 · 도안을 꺼낸 뒤의 원본 · 커진 로그
+rm -rf /root/.cache/pip /root/.cache/uv /root/.npm/_cacache
+[ $(ls $W/designs 2> /dev/null | wc -l) -ge 4000 ] && rm -rf $W/hfdata
+running "[c]rops.py" || rm -rf $W/tatreal_new $W/tatneg_new
+for f in $W/tattrain.log $W/teach/label.log $C/oi.log $C/oi_neg.log; do
+  [ -f $f ] && [ $(stat -c %s $f) -gt 5000000 ] && tail -c 1000000 $f > $f.t && mv $f.t $f
+done
+# 8) 학습 순환
 if ! running "[t]rain_loop"; then
   (setsid nohup bash $T/train_loop.sh >> $W/trainloop.log 2>&1 < /dev/null &)
 fi
