@@ -29,6 +29,10 @@ def sources():
     for p in sorted(glob.glob(f'{PC}/collections/tattoo_weak-*/images/*') + glob.glob(f'{PC}/collections/tattoo_real-*/*/*')):
         if p.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
             L.append((p, 'tat', 'eval' if int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 2 == 0 else 'train'))
+    # 코덱스 요청 7(타투로 잘못 읽히는 맨살): 맨살 팔과 같이(시험 전용이면 오검출로 채점)
+    for p in sorted(glob.glob(f'{PC}/collections/tattoo_negative-*/images/*')):
+        if p.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            L.append((p, 'arm', 'eval' if int(hashlib.sha1(os.path.basename(p).encode()).hexdigest(), 16) % 2 == 0 else 'train'))
     # 시험 전용 맨살 팔: 목록 파일이 없으면(컨테이너가 바뀌어 사라짐) 파일 이름 해시로 4장에 1장 — 다시 만들어도 같은 사진
     hold = set(l for l in open(A.holdout).read().split('\n') if l) if os.path.exists(A.holdout) else None
     for mf in sorted(glob.glob(f'{PC}/dot-candidates/dot-arms-*/*.json')):
