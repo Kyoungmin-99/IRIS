@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { bandMesh, faceRegions, strokeStrip, triangulate, LIPS_OUTER } from '../src/beauty/face-regions.ts';
 import { LOOKS, PALETTES } from '../src/beauty/palettes.ts';
 import { measureLimbWidth, placeFromPoint, tattooMesh, type PosePoints } from '../src/beauty/tattoo-place.ts';
-import { colorSkin, denseSleeve, dropEdgeBits, extractDesign, isDesignSheet, neutralInk, proposeRect, sheetRect, sleeveInk, sureRect } from '../src/beauty/tattoo-extract.ts';
+import { colorSkin, denseSleeve, dropEdgeBits, extractDesign, isDesignSheet, neutralInk, proposeRect, pruneInk, sheetRect, sleeveInk, sureInk, sureRect } from '../src/beauty/tattoo-extract.ts';
 
 type P = { x: number; y: number };
 const area = (pts: P[], tris: number[]): number => {
@@ -570,4 +570,40 @@ test('확신 잉크 영역(sureRect): 옷 위 확신 잉크는 빼고, 확신 �
   const r = sureRect({ w, h, d, skin, avoid, inkProb })!;
   assert.ok(r && r.x < 60 && r.x + r.w > 70 && r.y < 40 && r.y + r.h > 159 && r.y + r.h < 170, `영역 ${JSON.stringify(r)}`);
   assert.equal(sureRect({ w, h, d, skin }), null);
+});
+
+// 피부로 읽힌 골지 니트(잉크 모델이 결을 잉크로 확신, 둘레에 맨살 없음) vs 맨살 위 글씨: 영역은 글씨로, 넓혀 뽑은 니트 결은 지운다
+test('피부 위 잉크만 도안 영역으로 · 니트 결 지우기', () => {
+  const w = 200, h = 200, n = w * h;
+  const d = new Uint8ClampedArray(n * 4).fill(200);
+  const skin = new Float32Array(n).fill(1);
+  const inkProb = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    // 니트: 오른쪽 절반 전체, 세로 결(2칸마다 확신 잉크, 사이는 0.4)
+    if (x >= 110) inkProb[i] = x % 2 ? 0.9 : 0.4;
+    // 글씨: 왼쪽 맨살 위 가는 획 몇 개
+    if (x >= 30 && x < 70 && y >= 60 && y < 140 && (y % 10 < 2 || x % 13 < 2)) inkProb[i] = 0.95;
+  }
+  const src = { w, h, d, skin, inkProb };
+  const sure = sureInk(src)!;
+  let inKnit = 0;
+  // 니트 가장자리(맨살 곁) 한두 줄은 남을 수 있다: 안쪽만 본다
+  for (let y = 0; y < h; y++) for (let x = 120; x < w; x++) inKnit += sure[y * w + x];
+  assert.equal(inKnit, 0);
+  const r = sureRect(src)!;
+  assert.ok(r.x + r.w < 100, `영역이 글씨 쪽이어야 함: ${JSON.stringify(r)}`);
+  // 넓혀 뽑은 잉크(그림 전체 좌표): 글씨 + 니트 → 니트는 지워진다
+  const rgba = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) if (inkProb[i] > 0.6) rgba[i * 4 + 3] = 255;
+  const gone = pruneInk({ rgba, w, h, rect: { x: 0, y: 0, w, h } }, src, r);
+  assert.ok(gone > 0.5);
+  let knit = 0, letter = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!rgba[(y * w + x) * 4 + 3]) continue;
+    if (x >= 110) knit++;
+    else letter++;
+  }
+  assert.equal(knit, 0);
+  assert.ok(letter > 100);
 });

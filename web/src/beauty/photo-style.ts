@@ -610,6 +610,9 @@ export function makeupFromMeasure(m: FaceMeasure): MakeupStyle {
 
   // 아이섀도: 안쪽·바깥쪽을 따로 재서, 둘이 뚜렷이 다르면 두 색(앞머리 → 눈꼬리 그라데이션), 비슷하면 더 진한 쪽 한 색
   debug.shadow = `${fmt(m.shadowIn)} | ${fmt(m.shadowOut)} | 밑 ${fmt(m.underEye)}`;
+  // 두 눈 모두 재지 못했으면(앞머리·짙은 아이라인을 머리카락으로 읽음) 섀도·아이라인이 '없다'가 아니라 '모른다':
+  // 사진 모드 화장 옮기기는 눈가도 그대로 옮기게 표시한다(검은 앞머리 아래 스모키 화보의 눈 화장이 통째로 빠졌다)
+  if (!m.shadowIn && !m.shadowOut && m.linerL === null) debug.eyeUnknown = 1;
   const shadowOf = (sh: RGB): { color: RGB; amount: number } | null => {
     // 자연 눈꺼풀보다 어둡거나(음영) 색조가 다르면(컬러 섀도) 섀도로 본다
     const dark = Math.max(0, 1 - luma(sh) / NATURAL_SHADOW_L);

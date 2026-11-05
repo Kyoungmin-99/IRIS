@@ -2,7 +2,7 @@
 // 사진 모드 팔 타투 옮기기 단위 테스트
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { armStrip, inkMip, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, type Arm, type InkMap } from '../src/beauty/still-tattoo.ts';
+import { closeStrip, armStrip, inkMip, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, type Arm, type InkMap } from '../src/beauty/still-tattoo.ts';
 
 test('팔 반폭 재기: 폭 20 인 세로 띠 → 10 근처', () => {
   const W = 100, H = 100, skin = new Float32Array(W * H);
@@ -158,4 +158,20 @@ test('chestInkScale: 가슴 피부 띠 폭 대비 도안 세로 비율, 양옆 �
   assert.ok(c && Math.abs(c.ratio - 0.3) < 0.02 && c.clipped, JSON.stringify(c));
   // 도안 줄에 피부가 없으면(옷 위) null
   assert.equal(chestInkScale(new Float32Array(W * H), W, H, { x: 45, y: 40, w: 10, h: 30 }), null);
+});
+
+// 팔만 가까이 찍은 사진: 팔이 사진 양옆·아래로 이어지는 넓은 띠도 가로 축·가운데·반폭을 바로 잡는다(대각선 모서리를 끝으로 잡지 않게)
+test('가까운 팔 사진의 띠(closeStrip): 사진 밖으로 이어지는 팔', () => {
+  const W = 300, H = 200;
+  const m = new Float32Array(W * H);
+  // 위 40px 은 배경, 그 아래 끝까지 팔(오른쪽으로 갈수록 조금 가늘게)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (y >= 40 + x * 0.05) m[y * W + x] = 1;
+  const st = closeStrip(m, W, H)!;
+  assert.ok(st);
+  assert.ok(st.len > W * 0.9, `길이 ${st.len}`);
+  const mid = st.p[st.p.length >> 1];
+  assert.ok(Math.abs(mid.y - (40 + 7.5 + 200) / 2) < 10, `가운데 ${mid.y}`);
+  assert.ok(Math.abs(st.mean - 75) < 10, `반폭 ${st.mean}`);
+  // 굵은 쪽(왼쪽) → 가는 쪽
+  assert.ok(st.p[0].x < st.p[st.p.length - 1].x);
 });

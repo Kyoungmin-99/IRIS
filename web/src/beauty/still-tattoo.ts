@@ -439,6 +439,83 @@ export function armStrip(mask: Float32Array, W: number, H: number, roi: { x: num
 }
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
+/**
+ * 팔만 가까이 찍은 사진의 팔 띠: 피부 덩어리의 주축(PCA)을 따라 칸마다 옆으로 피부가 끝나는 곳을 재서 가운데·반폭을 정한다.
+ * 팔이 사진 양 끝 밖으로 이어지면 '가장 먼 두 끝'(armStrip)이 대각선 두 모서리가 되어 도안이 팔을 비스듬히 가로질렀다.
+ * 방향은 굵은 쪽 → 가는 쪽. mask: 0~1(W*H)
+ */
+export function closeStrip(mask: Float32Array, W: number, H: number): Strip | null {
+  const step = Math.max(1, Math.round(Math.max(W, H) / 300));
+  let n = 0, mx = 0, my = 0;
+  for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) if (mask[y * W + x] > 0.5) { n++; mx += x; my += y; }
+  if (n < 50) return null;
+  mx /= n; my /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) {
+    if (mask[y * W + x] <= 0.5) continue;
+    const dx = x - mx, dy = y - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const t = { x: Math.cos(th), y: Math.sin(th) }, nr = { x: -t.y, y: t.x };
+  // 축 위 범위: 덩어리 투영의 1~99%
+  const pr: number[] = [];
+  for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) if (mask[y * W + x] > 0.5) pr.push((x - mx) * t.x + (y - my) * t.y);
+  pr.sort((a, b) => a - b);
+  const t0 = pr[Math.floor(pr.length * 0.01)], t1 = pr[Math.floor(pr.length * 0.99)];
+  const K = 41, maxS = Math.hypot(W, H);
+  const on = (x: number, y: number) => {
+    const xi = Math.round(x), yi = Math.round(y);
+    return xi >= 0 && yi >= 0 && xi < W && yi < H && mask[yi * W + xi] > 0.5;
+  };
+  const off: number[] = [], hw: number[] = [];
+  for (let k = 0; k < K; k++) {
+    const tau = t0 + ((t1 - t0) * k) / (K - 1);
+    const cx = mx + t.x * tau, cy = my + t.y * tau;
+    // 축에서 옆으로 가장 긴 피부 구간(축이 덩어리 밖이면 가까운 쪽 구간)
+    let best = -1, bLo = 0, bHi = 0, run = 0, inRun = false;
+    for (let sv = -maxS; sv <= maxS; sv += step) {
+      const inside = on(cx + nr.x * sv, cy + nr.y * sv);
+      if (inside && !inRun) { run = sv; inRun = true; }
+      if ((!inside || sv + step > maxS) && inRun) {
+        const hi = inside ? sv : sv - step;
+        if (hi - run > best) { best = hi - run; bLo = run; bHi = hi; }
+        inRun = false;
+      }
+    }
+    if (best < 0) { off.push(NaN); hw.push(NaN); continue; }
+    off.push((bLo + bHi) / 2);
+    hw.push((bHi - bLo) / 2);
+  }
+  // 빈 칸은 이웃 값으로, 그다음 고르게(5칸 가운데 값)
+  const fill = (a: number[]) => {
+    const ok = a.map((v, i) => [v, i] as const).filter(([v]) => Number.isFinite(v));
+    if (!ok.length) return null;
+    return a.map((v, i) => (Number.isFinite(v) ? v : ok.reduce((b, c) => (Math.abs(c[1] - i) < Math.abs(b[1] - i) ? c : b))[0]));
+  };
+  const o2 = fill(off), h2 = fill(hw);
+  if (!o2 || !h2) return null;
+  const med = (a: number[]) => a.map((_, i) => { const w = a.slice(Math.max(0, i - 2), i + 3).sort((p, q) => p - q); return w[w.length >> 1]; });
+  let os = med(o2), hs = med(h2);
+  let p = os.map((o, k) => {
+    const tau = t0 + ((t1 - t0) * k) / (K - 1);
+    return { x: mx + t.x * tau + nr.x * o, y: my + t.y * tau + nr.y * o };
+  });
+  const q = Math.max(1, Math.round(K * 0.2));
+  const hA = hs.slice(0, q).reduce((a, b) => a + b, 0) / q, hB = hs.slice(-q).reduce((a, b) => a + b, 0) / q;
+  let nn = p.map(() => ({ ...nr }));
+  if (hB > hA) {
+    p = p.reverse();
+    hs = hs.reverse();
+    os = os.reverse();
+    nn = nn.map((v) => ({ x: -v.x, y: -v.y }));
+  }
+  const len = t1 - t0;
+  const mean = hs.reduce((a, b) => a + b, 0) / K;
+  if (!(len > 4) || !(mean > 1)) return null;
+  return { p, n: nn, h: Float32Array.from(hs), len, ratio: Math.max(hA, hB) / Math.max(1e-3, Math.min(hA, hB)), mean };
+}
+
 /** 띠의 어깨 쪽 끝에서 tau(px) 만큼, 옆으로 sigma(반폭 기준) 간 자리. 띠 밖이면 null */
 export function stripPoint(st: Strip, tau: number, sigma: number): P | null {
   if (tau < 0 || tau > st.len) return null;
