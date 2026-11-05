@@ -1184,7 +1184,9 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
   const legs = m[1] === 'thigh' || m[1] === 'calf';
   // 손만 찍은 사진(손목·손등)은 몸 관절점이 없어 팔을 못 정한다: 손 관절점으로 손등에 놓는다
   // (사용자 손 사진 5장에 팔 안쪽·손목 타투 12장을 골랐을 때 아무것도 안 그려지고 안내도 없었다)
-  const hand = !legs && (!body || !armsOf(body.pose, body.skin, engine.source.width, engine.source.height, false).some((x) => x.seen && x.vis >= 0.4)) ? await handOf() : null;
+  // 어깨가 보이는 사진(긴소매 전신 등)은 손만 찍은 사진이 아니다: 손등에 작게 찍고 '손만 나온 사진' 안내가 떴다 → 아래 '옷에 가려' 안내로
+  const shouldersSeen = !!body && Math.max(body.pose.vis[11] ?? 0, body.pose.vis[12] ?? 0) > 0.5;
+  const hand = !legs && !shouldersSeen && (!body || !armsOf(body.pose, body.skin, engine.source.width, engine.source.height, false).some((x) => x.seen && x.vis >= 0.4)) ? await handOf() : null;
   if (hand) return handPlacePlan(canvasInk(d.canvas), hand);
   if (!body) {
     // 팔만 가까이 찍은 내 사진: 피부 덩어리로 읽은 팔 띠에 놓는다
@@ -1673,7 +1675,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       tatStep('arm');
       // 손만 찍은 사진: 팔 전체에서 뽑은 잉크(실시간용 도안은 십자가 가로대만 58×25 로 잡히기도 했다)를 손등에
       const onHand = async (): Promise<TatPlan | null> => {
-        if (legs || !ink.w) return null;
+        if (legs || !ink.w || (mp && Math.max(mp.vis[11] ?? 0, mp.vis[12] ?? 0) > 0.5)) return null;
         const hand = await handOf();
         if (!hand) return null;
         // 고른 영역 도안(잉크 모델로 깨끗이 뽑힘)이 팔 전체 잉크만큼(60% 넘게) 담고 있으면 도안을 쓴다: 팔 전체에서 다시 뽑으면
