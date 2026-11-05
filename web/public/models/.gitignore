@@ -1,0 +1,5 @@
+*.onnx
+!hair-matte-256.onnx
+!face-parse-512.onnx
+!nail-crop-128.onnx
+!tattoo-ink.onnx
