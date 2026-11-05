@@ -1077,8 +1077,25 @@ function canvasInk(c: HTMLCanvasElement): InkMap {
  * 사진의 8% 넘는 덩어리이고 길이가 굵기의 1.5배 넘어야 팔로 본다(멀리 찍힌 손·얼굴 조각이 아니게).
  * 팔 클로즈업을 내 사진으로 고르면 '팔·다리를 찾지 못해' 안내만 뜨고 아무것도 안 그려졌다
  */
+let myPlace: { mine: ImageBitmap; p: Promise<string> } | null = null;
+/** 내 사진이 몸 어디를 찍은 사진인지(스타일 AI 타투 자리 머리): 팔 클로즈업인지 가리는 데 쓴다. 못 하면 '' */
+function myPlaceLabel(): Promise<string> {
+  const mine = photoOriginal!;
+  if (myPlace?.mine !== mine) {
+    myPlace = { mine, p: analyzeStyle(mine, 'tattoo').then((r) => {
+      const a = r.attributes.find((x) => x.group === 'placement');
+      dbgTat({ myPlace: a ? `${a.label} ${a.score.toFixed(2)}` : null });
+      return a && a.score >= 0.3 ? a.label : '';
+    }).catch(() => '') };
+  }
+  return myPlace.p;
+}
 async function myCloseArm(): Promise<{ st: Strip; arm: Arm; skin: Float32Array } | null> {
   photoAnalyzer ??= new PhotoAnalyzer(WASM_BASE);
+  // 등·목·쇄골 클로즈업도 길쭉한 피부 덩어리라 모양만으로는 팔과 못 가른다(맨 등에 십자가, 목에 나비가 크게 찍혔다):
+  // 스타일 AI 가 내 사진을 팔·손 쪽으로 볼 때만
+  const where = await myPlaceLabel();
+  if (where && !/손|팔|어깨|위팔/.test(where)) return null;
   const mc = stillCanvas();
   const W = mc.width, H = mc.height;
   const body = await photoAnalyzer.bodySkin(mc).catch(() => null);
@@ -1099,8 +1116,10 @@ async function myCloseArm(): Promise<{ st: Strip; arm: Arm; skin: Float32Array }
   for (let i = 0; i < limb.mask.length; i += 4) area += limb.mask[i];
   if (area * 4 < W * H * 0.08) { dbgTat({ myCloseArm: { small: +((area * 4) / (W * H)).toFixed(3) } }); return null; }
   const st = closeStrip(limb.mask, W, H);
-  dbgTat({ myCloseArm: st && { len: Math.round(st.len), mean: Math.round(st.mean), area: +((area * 4) / (W * H)).toFixed(2) } });
-  if (!st || st.len / (2 * st.mean) < 1.5) return null;
+  // 팔 띠는 옆으로 배경이 보인다: 축에 수직인 사진 폭의 90% 넘게 피부면 팔이 아니다(목·쇄골·등 클로즈업이 팔로 읽혀 나비가 목까지 크게 찍혔다)
+  const across = st ? (() => { const a = st.p[0], b = st.p[st.p.length - 1], L = Math.hypot(b.x - a.x, b.y - a.y) || 1; return (Math.abs(b.y - a.y) / L) * W + (Math.abs(b.x - a.x) / L) * H; })() : 0;
+  dbgTat({ myCloseArm: st && { len: Math.round(st.len), mean: Math.round(st.mean), area: +((area * 4) / (W * H)).toFixed(2), fill: +((2 * st.mean) / across).toFixed(2) } });
+  if (!st || st.len / (2 * st.mean) < 1.5 || 2 * st.mean > across * 0.9) return null;
   const a = stripPoint(st, 0, 0), b = stripPoint(st, st.len / 2, 0), c = stripPoint(st, st.len, 0);
   if (!a || !b || !c) return null;
   return { st, arm: { s: a, e: b, w: c, rUp: st.mean, rLo: st.mean }, skin: ms };
@@ -1171,7 +1190,11 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
     // 팔만 가까이 찍은 내 사진: 피부 덩어리로 읽은 팔 띠에 놓는다
     const close = !legs ? await closeArmPlacePlan(d.canvas, d.aspect) : null;
     if (close) return close;
-    tatNote = '내 사진에서 팔·다리를 찾지 못해 타투를 놓을 자리가 없어요. 📍 자리 고르기로 보이는 피부에 놓아 보세요';
+    // 등·목·쇄골만 가까이 찍은 사진이면 그렇게 읽었다고 알린다(어디가 문제인지 알 수 있게)
+    const where = !legs ? await myPlaceLabel() : '';
+    tatNote = where && !/손|팔|어깨|위팔/.test(where)
+      ? `내 사진은 ${where} 쪽만 가까이 찍은 사진으로 보여요. 사진 모드 타투는 아직 팔·다리(또는 상반신 사진의 쇄골 아래)에만 입혀요. 📍 자리 고르기로 놓아 볼 수 있어요`
+      : '내 사진에서 팔·다리를 찾지 못해 타투를 놓을 자리가 없어요. 📍 자리 고르기로 보이는 피부에 놓아 보세요';
     return null;
   }
   const both = body ? armsOf(body.pose, body.skin, engine.source.width, engine.source.height, legs) : null;
@@ -1623,13 +1646,16 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         if (!limb) return null;
         if (!ref.user) {
           // 빽빽한 컬러 소매는 선만 뽑으면 조각만 남는다: 팔 전체를 맨살 대비 투과율로
-          const dense = denseSleeve(ref.src, limb.mask);
+          // 스타일 AI 가 미니·스몰 타투로 본 사진은 소매가 아니다: 폰 셀카의 손목 튤립이 빽빽한 소매로 읽혀 팔 전체(폰·손가락)가 잉크로 옮겨졌다
+          const aiSize = lastStyle?.ai?.raw?.attributes?.find((x) => x.group === 'size')?.label ?? '';
+          const dense = !/미니|스몰/.test(aiSize) && denseSleeve(ref.src, limb.mask);
           dbgTat({ denseSleeve: dense });
           const ex = dense ? sleeveInk(ref.src, limb.box, 1600) : extractDesign(ref.src, limb.box, 1600);
           if (ex) {
             ink = { rgba: ex.rgba, w: ex.w, h: ex.h, rect: ex.rect };
-            // 처음 도안 영역 밖의 손가락 그늘·폰 모서리·니트 결은 지운다(빽빽한 소매는 그대로: 소매 전체가 도안)
-            if (!dense) dbgTat({ pruned: +pruneInk(ink, ref.src, ref.rect).toFixed(3) });
+            // 처음 도안 영역 밖의 손가락 그늘·폰 모서리·니트 결은 지운다
+            // 빽빽한 소매로 잘못 읽힌 폰 셀카(손목 튤립)도 폰 모서리가 소매로 뽑혔다: 소매도 모델이 잉크로 보지 않는 조각·옷/폰에 닿은 조각은 지운다
+            dbgTat({ pruned: +pruneInk(ink, ref.src, ref.rect, dense).toFixed(3) });
             if (tatMono) neutralInk(ink.rgba);
             eraseFace(ink);
           }
@@ -1664,7 +1690,8 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       // 팔만 가까이 찍은 내 사진(관절점 팔 없음): 피부 덩어리로 읽은 내 팔 띠에, 고른 사진 팔 굵기 대 내 팔 굵기 비로 옮긴다.
       // 잉크 가운데를 내 팔 가운데에 둔다
       const closePlan = async (): Promise<TatPlan | null> => {
-        if (legs) return null;
+        // 어깨가 보이는 사진(등·상반신)은 팔 클로즈업이 아니다: 맨 등이 팔로 읽혀 십자가가 등에 늘어져 찍혔다
+        if (legs || (mp && Math.max(mp.vis[11] ?? 0, mp.vis[12] ?? 0) > 0.5)) return null;
         const my = await myCloseArm();
         if (!my) return null;
         let refLen = 0, refMean = 0;
@@ -1714,7 +1741,10 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         const map = (l: number, sg: number) => refPt(tauC + (l - myLen / 2) * k, sg);
         return { dst: my.arm, skin: my.skin, ink, src: flip ? (l: number, sg: number) => map(myLen - l, -sg) : map };
       };
-      const fallback = async (): Promise<TatPlan | null> => (await onHand()) ?? closePlan();
+      // 손과 아래팔이 함께 나온 사진은 아래팔에 먼저(손목 튤립이 손바닥에 점처럼 찍혔다). 고른 타투가 손·손가락 타투면 손등 먼저
+      const placeLabel = lastStyle?.ai?.raw?.attributes?.find((x) => x.group === 'placement')?.label ?? '';
+      const handFirst = /손(?!목)/.test(placeLabel);
+      const fallback = async (): Promise<TatPlan | null> => (handFirst ? (await onHand()) ?? closePlan() : (await closePlan()) ?? onHand());
       if (!mp || !ms) return fallback();
       const mArms = armsOf(mp, ms, mc.width, mc.height, legs);
       const ok = (a: (typeof mArms)[number]) => a.seen && a.vis > 0.4;

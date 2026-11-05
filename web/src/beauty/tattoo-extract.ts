@@ -352,9 +352,9 @@ export function sureInk(src: InkSource): Uint8Array | null {
  * 영역 밖으로 넓혀 뽑은 잉크(팔 전체)에서 도안이 아닌 조각을 지운다: 처음 도안 영역(keep, 짧은 변 3% 넓힘)에 걸치지 않는 덩어리는
  * 잉크 모델이 확신하고(평균 0.5 넘음) 둘레가 맨살(25% 넘게)이며 피할 곳(옷·폰)에 닿지 않을 때만 남긴다.
  * 폰을 든 손 셀카에서 손가락 사이 그늘·폰 모서리가, 니트 소매 사진에서 니트 결이 팔 전체 잉크로 뽑혀 내 팔에 검은 줄로 찍혔다.
- * 지운 잉크 양 비율을 돌려준다
+ * dense: 빽빽한 소매(둘레 맨살 조건 없이). 지운 잉크 양 비율을 돌려준다
  */
-export function pruneInk(ink: { rgba: Uint8ClampedArray; w: number; h: number; rect: Rect }, src: InkSource, keep: Rect): number {
+export function pruneInk(ink: { rgba: Uint8ClampedArray; w: number; h: number; rect: Rect }, src: InkSource, keep: Rect, dense = false): number {
   const P = src.inkProb;
   if (!P) return 0;
   const { w, h } = src;
@@ -395,7 +395,8 @@ export function pruneInk(ink: { rgba: Uint8ClampedArray; w: number; h: number; r
     all += sumA[c];
     if (inKeep[c] || !sumA[c]) continue;
     const mp = sumP[c] / sumA[c], mb = sumB[c] / sumA[c], mv = sumV[c] / sumA[c];
-    if (mp > 0.5 && mb > 0.25 && mv < 0.2) continue;
+    // 빽빽한 소매(dense)는 둘레에 맨살이 없어도 잉크: 모델 확신·피할 곳 안 닿음만 본다
+    if (mp > 0.5 && (dense || mb > 0.25) && mv < 0.2) continue;
     drop[c] = 1;
     gone += sumA[c];
   }
