@@ -25,7 +25,7 @@ import { FACE_OVAL, measureFace, type FaceMeasure } from '../beauty/face-measure
 import { matchDarkness, matchLip, matchTint } from '../beauty/style-match.ts';
 import { analyzeStyle } from '../beauty/style-ai.ts';
 import { hintsFromStyleAI, promptFromStyleAI, type StyleHints } from '../beauty/style-attributes.ts';
-import { checkGenServer, generate as genGenerate, genServerUrl, setGenServerUrl, swapFaces, toDataUrl, type GenCategory } from '../beauty/gen-mode.ts';
+import { checkGenServer, generate as genGenerate, genAutoCheck, genServerUrl, setGenServerUrl, swapFaces, toDataUrl, type GenCategory } from '../beauty/gen-mode.ts';
 import { gam, lin, lipCloseup, lipTarget, luma } from '../beauty/style-math.ts';
 import type { NailStyle } from '../beauty/nail.ts';
 import { BeautyEngine } from '../engine/engine.ts';
@@ -1689,6 +1689,9 @@ async function updateStillHair(): Promise<void> {
   // 팔 대 팔이 안 되면 고른 자리에 굽는다
   const placeOn = !plan && !!tattoo.design && !off.has('tattoo');
   if (placeOn) plan = await placeTattooPlan();
+  // 어느 길로도 놓을 자리를 못 찾았는데 안내가 없으면(손가락만 크게 찍은 사진, 풍경을 도안으로 읽은 몸통 타투 등)
+  // 아무 변화 없이 끝나 무엇이 잘못됐는지 몰랐다 → 늘 안내를 남긴다
+  if (placeOn && !plan && !tatNote) tatNote = '내 사진에서 고른 타투를 놓을 자리(팔·다리·쇄골 아래)를 찾지 못했어요. 📍 자리 고르기로 보이는 피부를 눌러 놓아 보세요';
   // 자리를 위팔로 옮겼을 수 있으니 열쇠는 계획 뒤에
   const pk = placeKey();
   const placed = placeOn && !!plan;
@@ -1708,7 +1711,7 @@ async function updateStillHair(): Promise<void> {
   const bakeNote = (): string => nailNote || (amount > 0 ? mineHairNote || hairSkipNote : '') || (mkOn && !mkp ? mkPlanNote : '');
   if (key === stillHairKey && refHair?.src === lastSource) {
     // 같은 결과면 다시 굽지 않지만, 타투를 못 옮긴 안내(옷에 가림 등)는 다른 안내에 지워졌을 수 있어 다시 띄운다
-    if (tatOn && !plan && tatNote) setStatus(tatNote);
+    if ((tatOn || placeOn) && !plan && tatNote) setStatus(tatNote);
     else if (bakeNote()) setStatus(bakeNote());
     return;
   }
@@ -1819,7 +1822,7 @@ async function updateStillHair(): Promise<void> {
     if (stillHairBusy === job) stillHairBusy = null;
   }
   // 몸통 타투를 반대쪽(앞/뒤) 사진에 넣으려던 경우 안내
-  if (tatOn && (placed || !plan || !!plan.torso) && tatNote) setStatus(tatNote);
+  if ((tatOn || placeOn) && (placed || !plan || !!plan.torso) && tatNote) setStatus(tatNote);
   // 굽기 계획 없이 끝났으면(고른 사진에서 몸·팔을 못 찾음 → 실시간 타투) '보는 중' 안내를 남기지 않는다
   else if (statusEl.textContent === TAT_LOOKING) setStatus('');
 }
@@ -3007,6 +3010,7 @@ async function skinOf(c: HTMLCanvasElement, pts: { x: number; y: number }[], hai
 
 /** 사진처럼 서버의 전용 얼굴 바꾸기 모델(inswapper)이 켜져 있으면 그걸로: 얼굴을 다시 그려 코·입이 무너지지 않는다 */
 async function makeSwapServer(mine: ImageBitmap, ref: ImageBitmap): Promise<ImageBitmap | null> {
+  if (!genAutoCheck()) return null;
   const h = await checkGenServer();
   if (!h?.realistic?.swap) return null;
   setStatus('AI 생성 서버의 얼굴 바꾸기 모델로 그리는 중…');
@@ -3191,7 +3195,7 @@ genUrlEl.addEventListener('input', () => {
 });
 // 서버를 나중에 켜도 단추가 나타나게: 단추가 숨어 있는 동안 15초마다 다시 확인
 setInterval(() => {
-  if (btnGenEl.hidden && genEl.hidden) void refreshGenStatus();
+  if (btnGenEl.hidden && genEl.hidden && genAutoCheck()) void refreshGenStatus();
 }, 15000);
 
 async function refreshGenStatus(): Promise<boolean> {
@@ -4138,7 +4142,7 @@ try {
 } catch {
   /* 무시 */
 }
-void refreshGenStatus();
+if (genAutoCheck()) void refreshGenStatus();
 {
   const src = params.get('src');
   if (src === 'sample') {
