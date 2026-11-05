@@ -324,14 +324,94 @@ export function proposeRect(src: InkSource, found = findInk(src)): Rect | null {
 
 /** 잉크 모델이 확신한 잉크(0.6 넘음, 옷·머리카락·배경 위는 뺌)를 짧은 변 2% 넓혀 묶어, 확신 잉크가 가장 많은 무리를 감싸는 영역. 없으면 null.
  * 굵은 먹 십자가는 막대가 피부 구멍이라 규칙 잉크가 가장자리에만 생겨 proposeRect 가 가로대 조각만 골랐다 */
+/**
+ * 잉크 모델이 확신하는 잉크(0.6 넘음, 피할 곳 아님). 둘레(짧은 변 2.5%)에 맨살(피부·잉크 확률 0.15 아래)이 25% 넘게 있는
+ * '피부 위 잉크'가 40px 넘으면 그것만: 분할이 피부로 읽은 골지 니트(분홍 스웨터)의 결을 모델이 잉크로 확신해(1.7만 px, 둘레 맨살 10%)
+ * 글씨 타투(5천 px, 둘레 맨살 64%) 대신 니트를 도안 영역으로 골랐다. 빽빽한 소매(둘레 맨살 8%)처럼 그런 잉크가 거의 없으면 모두
+ */
+export function sureInk(src: InkSource): Uint8Array | null {
+  const P = src.inkProb;
+  if (!P) return null;
+  const { w, h } = src;
+  const n = w * h;
+  const sure = new Uint8Array(n);
+  const bare = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const ok = !src.avoid || src.avoid[i] < 0.5;
+    if (P[i] > 0.6 && ok) sure[i] = 1;
+    if (P[i] < 0.15 && ok && src.skin[i] > 0.5) bare[i] = 1;
+  }
+  const bn = boxBlur(bare, w, h, Math.max(2, Math.min(w, h) * 0.025));
+  const onSkin = new Uint8Array(n);
+  let cnt = 0;
+  for (let i = 0; i < n; i++) if (sure[i] && bn[i] > 0.25) { onSkin[i] = 1; cnt++; }
+  return cnt >= 40 ? onSkin : sure;
+}
+
+/**
+ * 영역 밖으로 넓혀 뽑은 잉크(팔 전체)에서 도안이 아닌 조각을 지운다: 처음 도안 영역(keep, 짧은 변 3% 넓힘)에 걸치지 않는 덩어리는
+ * 잉크 모델이 확신하고(평균 0.5 넘음) 둘레가 맨살(25% 넘게)이며 피할 곳(옷·폰)에 닿지 않을 때만 남긴다.
+ * 폰을 든 손 셀카에서 손가락 사이 그늘·폰 모서리가, 니트 소매 사진에서 니트 결이 팔 전체 잉크로 뽑혀 내 팔에 검은 줄로 찍혔다.
+ * dense: 빽빽한 소매(둘레 맨살 조건 없이). 지운 잉크 양 비율을 돌려준다
+ */
+export function pruneInk(ink: { rgba: Uint8ClampedArray; w: number; h: number; rect: Rect }, src: InkSource, keep: Rect, dense = false): number {
+  const P = src.inkProb;
+  if (!P) return 0;
+  const { w, h } = src;
+  const n = w * h;
+  const bare = new Float32Array(n), av = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = src.avoid ? src.avoid[i] : 0;
+    if (P[i] < 0.15 && a < 0.5 && src.skin[i] > 0.5) bare[i] = 1;
+    if (a > 0.5) av[i] = 1;
+  }
+  const short = Math.min(w, h);
+  const bn = boxBlur(bare, w, h, Math.max(2, short * 0.025));
+  const an = boxBlur(av, w, h, Math.max(2, short * 0.01));
+  const m = new Uint8Array(ink.w * ink.h);
+  for (let i = 0; i < m.length; i++) if (ink.rgba[i * 4 + 3] >= 24) m[i] = 1;
+  // 획 사이가 끊긴 글자·꽃잎이 한 덩어리가 되게 조금 넓혀 묶는다
+  const grown = boxBlur(Float32Array.from(m), ink.w, ink.h, Math.max(1, Math.min(ink.w, ink.h) * 0.01));
+  const gm = new Uint8Array(m.length);
+  for (let i = 0; i < m.length; i++) gm[i] = grown[i] > 0 ? 1 : 0;
+  const { lab, n: nc } = label(gm, ink.w, ink.h);
+  const sx = ink.rect.w / ink.w, sy = ink.rect.h / ink.h;
+  const mg = short * 0.03;
+  const kx0 = keep.x - mg, ky0 = keep.y - mg, kx1 = keep.x + keep.w + mg, ky1 = keep.y + keep.h + mg;
+  const inKeep = new Uint8Array(nc + 1);
+  const sumA = new Float64Array(nc + 1), sumP = new Float64Array(nc + 1), sumB = new Float64Array(nc + 1), sumV = new Float64Array(nc + 1);
+  for (let y = 0; y < ink.h; y++) for (let x = 0; x < ink.w; x++) {
+    const j = y * ink.w + x, c = lab[j];
+    if (!c || !m[j]) continue;
+    const X = ink.rect.x + (x + 0.5) * sx, Y = ink.rect.y + (y + 0.5) * sy;
+    if (X >= kx0 && X <= kx1 && Y >= ky0 && Y <= ky1) inKeep[c] = 1;
+    const i = Math.min(h - 1, Math.max(0, Math.floor(Y))) * w + Math.min(w - 1, Math.max(0, Math.floor(X)));
+    const a = ink.rgba[j * 4 + 3] / 255;
+    sumA[c] += a; sumP[c] += P[i] * a; sumB[c] += bn[i] * a; sumV[c] += an[i] * a;
+  }
+  const drop = new Uint8Array(nc + 1);
+  let all = 0, gone = 0;
+  for (let c = 1; c <= nc; c++) {
+    all += sumA[c];
+    if (inKeep[c] || !sumA[c]) continue;
+    const mp = sumP[c] / sumA[c], mb = sumB[c] / sumA[c], mv = sumV[c] / sumA[c];
+    // 빽빽한 소매(dense)는 둘레에 맨살이 없어도 잉크: 모델 확신·피할 곳 안 닿음만 본다
+    if (mp > 0.5 && (dense || mb > 0.25) && mv < 0.2) continue;
+    drop[c] = 1;
+    gone += sumA[c];
+  }
+  for (let j = 0; j < m.length; j++) if (drop[lab[j]]) ink.rgba[j * 4 + 3] = 0;
+  return all ? gone / all : 0;
+}
+
 export function sureRect(src: InkSource): Rect | null {
   const P = src.inkProb;
   if (!P) return null;
   const { w, h } = src;
   const short = Math.min(w, h);
-  const sure = new Uint8Array(w * h);
+  const sure = sureInk(src)!;
   const f = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) if (P[i] > 0.6 && (!src.avoid || src.avoid[i] < 0.5)) { sure[i] = 1; f[i] = 1; }
+  for (let i = 0; i < w * h; i++) if (sure[i]) f[i] = 1;
   const grown = boxBlur(f, w, h, Math.max(2, short * 0.02));
   const gm = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) gm[i] = grown[i] > 0 ? 1 : 0;

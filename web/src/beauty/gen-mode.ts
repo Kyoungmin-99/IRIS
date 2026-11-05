@@ -58,6 +58,22 @@ export function genServerUrl(): string {
   }
 }
 
+/**
+ * 생성 서버를 저절로(처음·15초마다) 확인해도 되는지.
+ * 배포 사이트(https)에서 기본 주소(127.0.0.1:8765)를 15초마다 두드리면 콘솔에 오류가 쌓이고,
+ * 최신 크롬은 '이 사이트가 기기의 다른 앱에 접근하려 함' 권한 창을 띄울 수 있다.
+ * → 앱을 로컬에서 열었거나, 사용자가 서버 주소를 직접 적었거나, 주소에 ?gen=1 이 있을 때만.
+ */
+export function genAutoCheck(host = location.hostname, search = location.search): boolean {
+  if (/^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(host) || /^(192\.168|10)\./.test(host)) return true;
+  if (new URLSearchParams(search).has('gen')) return true;
+  try {
+    return !!localStorage.getItem(KEY);
+  } catch {
+    return false;
+  }
+}
+
 export function setGenServerUrl(url: string): void {
   try {
     localStorage.setItem(KEY, url.replace(/\/+$/, ''));

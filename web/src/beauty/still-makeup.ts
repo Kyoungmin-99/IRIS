@@ -125,10 +125,33 @@ export function transferMakeup(
   const myL = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   const rfL = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   const t = new Float32Array(3);
+  // 고른 사진이 내 사진보다 훨씬 어둡게 찍혔으면(어두운 화보: 피부 가운데 밝기 비 1.3~1.8 넘음) 빛 세기를 최대 3배 맞춘다.
+  // 립 색은 고른 사진 입술 색 그대로 쓰므로, 어두운 사진의 진한 빨간 립(L 9, a 16)이 밝은 내 얼굴에 탁한 갈색 립이 됐고
+  // 아이라인·섀도도 눈두덩과의 밝기 차가 작게 재어져 흐릿했다(색 비율은 그대로라 색조는 바뀌지 않는다)
+  const lin = (v: number) => { const c = v / 255; return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92; };
+  const unlin = (c: number) => 255 * (c > 0.0031308 ? 1.055 * c ** (1 / 2.4) - 0.055 : 12.92 * c);
+  const Y = (r: number, g: number, b: number) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  let expo = 1;
+  {
+    const ym: number[] = [], yr: number[] = [];
+    for (let i = 0; i < n; i += 2) {
+      if (V[i] < 0.5 || face[i] < 0.5 || lipB[i] > 0 || zoneB[i] > 0 || browM[i] > 0.2) continue;
+      ym.push(Y(sub[i * 4], sub[i * 4 + 1], sub[i * 4 + 2]));
+      yr.push(Y(wr.rgb[i * 3], wr.rgb[i * 3 + 1], wr.rgb[i * 3 + 2]));
+    }
+    if (ym.length > 50) {
+      ym.sort((p, q) => p - q); yr.sort((p, q) => p - q);
+      const ratio = ym[ym.length >> 1] / Math.max(1e-3, yr[yr.length >> 1]);
+      expo = 1 + (Math.min(3, ratio) - 1) * ramp(ratio, 1.3, 1.8);
+    }
+  }
+  if (dbg) dbg.expo = +expo.toFixed(2);
   for (let i = 0; i < n; i++) {
     rgb2lab(sub[i * 4], sub[i * 4 + 1], sub[i * 4 + 2], t);
     myL[0][i] = t[0]; myL[1][i] = t[1]; myL[2][i] = t[2];
-    const r = Math.round(wr.rgb[i * 3]), g = Math.round(wr.rgb[i * 3 + 1]), b = Math.round(wr.rgb[i * 3 + 2]);
+    let r = wr.rgb[i * 3], g = wr.rgb[i * 3 + 1], b = wr.rgb[i * 3 + 2];
+    if (expo > 1) { r = unlin(Math.min(1, lin(r) * expo)); g = unlin(Math.min(1, lin(g) * expo)); b = unlin(Math.min(1, lin(b) * expo)); }
+    r = Math.round(r); g = Math.round(g); b = Math.round(b);
     rgb2lab(Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b)), t);
     rfL[0][i] = t[0]; rfL[1][i] = t[1]; rfL[2][i] = t[2];
   }
@@ -147,6 +170,12 @@ export function transferMakeup(
     return new Float32Array(n).fill(v.length ? v[Math.floor((v.length - 1) * q)] : 0);
   };
   myBase[1] = pct(myL[1], 0.05); rfBase[1] = pct(rfL[1], 0.05);
+  const myMedL = pct(myL[0], 0.5)[0], rfMedL = pct(rfL[0], 0.5)[0];
+  // 피부 톤은 ITA 각(atan((L − 50) / b), 피부과에서 쓰는 피부 밝기 등급: 55° 넘으면 아주 밝음, 28~41° 중간, 10~28° 탄, 10° 아래 갈색)으로:
+  // 밝게 찍은 스튜디오 사진의 갈색 피부는 L 이 65 로 밝은 피부와 거의 같아 L 만으로는 가르지 못했다
+  const myMedB = pct(myL[2], 0.5)[0];
+  const ita = (Math.atan2(myMedL - 50, Math.max(1, myMedB)) * 180) / Math.PI;
+  const darkSkin = ramp(40 - ita, 0, 25);
   myBase[2] = pct(myL[2], 0.5); rfBase[2] = pct(rfL[2], 0.5);
   // 색 조명: 고른 사진 바탕(사진 가장자리)이 진한 색이면(빨간 배경 16번: 색도 60) 그 빛이 얼굴 전체에 비쳐 피부가 고르게 붉게 찍힌다.
   // 덜 붉은 5% 피부를 맨 피부로 삼으면 그 빛까지 화장이 되어 내 얼굴 아래쪽 전체·턱까지 분홍이 됐다(볼~턱 a +7.7).
@@ -186,6 +215,46 @@ export function transferMakeup(
       V[i] *= 1 - ramp(rfBase[0][i] - rfL[0][i], 25, 40) * (1 - zone);
     }
   }
+  // 한쪽 눈가가 고른 사진에서 손·머리카락에 가렸으면(믿을 몫이 낮으면) 내 얼굴 기준으로 거울에 비친 다른 쪽 눈가의 고른 사진 값을 빌린다:
+  // 볼에 손을 댄 화보(W)에서 한쪽 눈가 믿을 몫이 0.29 라 그 눈은 둘레 피부 값으로 메워져 섀도가 거의 없고 다른 눈만 주황 섀도였다.
+  // 화장은 좌우가 같다고 본다(두 눈 중심을 잇는 선의 수직이등분선에 비춤)
+  const eyeQ: number[] = [];
+  {
+    const cR = dp[468] ?? dp[33], cL = dp[473] ?? dp[263];
+    const ex0 = cL.x - cR.x, ey0 = cL.y - cR.y, el = Math.hypot(ex0, ey0) || 1, ux = ex0 / el, uy = ey0 / el;
+    const mx = (cL.x + cR.x) / 2, my = (cL.y + cR.y) / 2;
+    const handNear = rHands ? boxBlur(rHands, w, h, rf(0.05)) : null;
+    const q = new Float32Array(n);
+    const sumQ = [0, 0], sumE = [0, 0];
+    for (let i = 0; i < n; i++) {
+      if (eyeM[i] <= 0.02) continue;
+      q[i] = V[i] * (handNear ? 1 - ramp(handNear[i], 0.02, 0.2) : 1);
+      const x = i % w, y = (i / w) | 0;
+      const s = (x - mx) * ux + (y - my) * uy > 0 ? 1 : 0;
+      sumQ[s] += q[i] * eyeM[i];
+      sumE[s] += eyeM[i];
+    }
+    for (let s = 0; s < 2; s++) eyeQ.push(sumE[s] ? sumQ[s] / sumE[s] : 0);
+    // 두 눈가 믿을 몫 차이가 뚜렷할 때만(0.2 넘게): 고개를 돌린 사진은 두 눈 모양이 달라 비춘 값이 어긋난다
+    if (Math.abs(eyeQ[0] - eyeQ[1]) > 0.2) {
+      const low = eyeQ[0] < eyeQ[1] ? 0 : 1;
+      const rfC = rfL.map((c) => Float32Array.from(c)), V0 = Float32Array.from(V);
+      for (let i = 0; i < n; i++) {
+        if (eyeM[i] <= 0.02) continue;
+        const x = i % w, y = (i / w) | 0;
+        const dd = (x - mx) * ux + (y - my) * uy;
+        if ((dd > 0 ? 1 : 0) !== low) continue;
+        const X = Math.round(x - 2 * dd * ux), Y = Math.round(y - 2 * dd * uy);
+        if (X < 0 || Y < 0 || X >= w || Y >= h) continue;
+        const j = Y * w + X;
+        const t = Math.max(0, q[j] - q[i]) * ramp(eyeM[j], 0.02, 0.2);
+        if (t <= 0) continue;
+        for (let c = 0; c < 3; c++) rfL[c][i] = rfC[c][i] + (rfC[c][j] - rfC[c][i]) * t;
+        V[i] = V0[i] + (V0[j] - V0[i]) * t;
+      }
+    }
+  }
+  if (dbg) dbg.eyeQ = eyeQ.map((v) => +v.toFixed(2));
   const myLow = myL.map((c) => wblur(c, V, w, h, rL));
   const rfLow = rfL.map((c) => wblur(c, V, w, h, rL));
   // 화장 차이. 손·앞머리로 가려 고른 사진 화장을 모르는 곳(입술 위 손가락 등)은 둘레 값으로 메운다
@@ -251,7 +320,15 @@ export function transferMakeup(
         const floor = Math.min(0, rfLow[0][i] - myLow[0][i]);
         if (va < floor) va += (floor - va) * kAbs;
       }
-      d[i] = Math.max(lo2, Math.min(hi, va));
+      // 어두운 피부(ITA 40° 아래, 또는 그 자리 바탕 밝기 L 66 아래: 그늘진 쪽 볼도)에서는 피부(입술·눈가 밖)의 색 차이를 덜(최대 60%, 차갑게 하기는 80%),
+      // 밝히기를 덜(최대 60%) 옮긴다: 같은 Lab 차이(a +8)도 어두운 피부에선 훨씬 짙은 분홍으로 보여, 흰 피부 사진의 과즙 블러셔가
+      // 바탕 L 57 피부에 붉은 원판처럼 찍혔고, 흰 피부 쪽 바탕색(b −3)이 옮겨져 얼굴만 목보다 잿빛으로 떴다
+      let dv = Math.max(lo2, Math.min(hi, va));
+      const dk = Math.max(darkSkin, ramp(66 - myBase[0][i], 0, 16)) * (1 - zm);
+      if (dk > 0) dv *= c > 0 ? 1 - (c === 2 && dv < 0 ? 0.8 : 0.6) * dk : dv > 0 ? 1 - 0.6 * dk : 1;
+      // 빛 세기를 맞춘 고른 사진(expo > 1)은 색 차이도 세제곱근만큼 커진다: 피부(블러셔)는 그만큼 되돌린다(립·눈가는 그대로)
+      if (c > 0 && expo > 1) dv *= 1 - (1 - expo ** (-1 / 3)) * (1 - zm);
+      d[i] = dv;
     }
     return d;
   });
@@ -272,6 +349,41 @@ export function transferMakeup(
       }
     }
   }
+  // 두 눈의 섀도는 같은 화장이다: 고른 사진에서 한쪽 눈가가 손에 가리거나(볼에 댄 손가락 곁) 한쪽만 그늘·빛을 받으면
+  // 그 눈만 진한 주황 섀도가 되어 짝짝이로 보였다(W 화보: 한쪽 a +14, 다른 쪽 +3). 눈마다 평균 차이를 재어,
+  // 믿을 만한 정도(가리지 않은 눈가 몫, 손 곁이면 덜)로 가중한 두 눈 평균으로 맞춘다(눈 안 잔무늬는 그대로)
+  const eyeBal: Record<string, unknown> = {};
+  {
+    const cR = dp[468] ?? dp[33], cL = dp[473] ?? dp[263];
+    const ex = cL.x - cR.x, ey = cL.y - cR.y, mx = (cL.x + cR.x) / 2, my = (cL.y + cR.y) / 2;
+    const handNear = rHands ? boxBlur(rHands, w, h, rf(0.05)) : null;
+    const sum = [[0, 0, 0], [0, 0, 0]], wq = [0, 0], all = [0, 0];
+    const side = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      if (eyeM[i] <= 0.05) continue;
+      const x = i % w, y = (i / w) | 0;
+      const s = (x - mx) * ex + (y - my) * ey > 0 ? 1 : 0;
+      side[i] = s + 1;
+      all[s] += eyeM[i];
+      const q = eyeM[i] * V[i] * (handNear ? 1 - ramp(handNear[i], 0.02, 0.2) : 1);
+      wq[s] += q;
+      for (let c = 0; c < 3; c++) sum[s][c] += D[c][i] * q;
+    }
+    if (wq[0] > 1 && wq[1] > 1 && all[0] > 0 && all[1] > 0) {
+      const q = [wq[0] / all[0], wq[1] / all[1]];
+      // 믿음 몫을 제곱해 가중: 한쪽이 절반쯤 가리면 거의 다른 쪽 값으로
+      const g = [q[0] ** 2, q[1] ** 2];
+      const mean = sum.map((v, s) => v.map((t) => t / wq[s]));
+      const T = [0, 1, 2].map((c) => (mean[0][c] * g[0] + mean[1][c] * g[1]) / (g[0] + g[1]));
+      for (let i = 0; i < n; i++) {
+        if (!side[i]) continue;
+        const s = side[i] - 1;
+        for (let c = 0; c < 3; c++) D[c][i] += (T[c] - mean[s][c]) * eyeM[i];
+      }
+      Object.assign(eyeBal, { q: q.map((v) => +v.toFixed(2)), mean: mean.map((v) => v.map((t) => +t.toFixed(1))), T: T.map((t) => +t.toFixed(1)) });
+    }
+  }
+  if (dbg) dbg.eyeBal = eyeBal;
   // 가까운 둘레(얼굴 폭 6%)로 먼저, 손이 넓게 가린 곳은 먼 둘레(18%)로.
   // 입술 밖은 입술 값을 빼고 메운다: 섞으면 턱에 댄 손가락으로 가린 아랫입술 밑이 립 색(a +15)으로 메워져
   // 턱에 분홍 얼룩이 번졌다. 입술 자리는 지금처럼 둘레 전체로(눈가는 빼지 않는다: 눈 밑 블러셔가 볼 메우기에 필요)
@@ -299,8 +411,9 @@ export function transferMakeup(
     Vb[i] = v;
   }
   if (dbg) {
+    const at0 = () => { const i = Math.round(dp[205].y) * w + Math.round(dp[205].x); return [+myBase[0][i].toFixed(1), +rfBase[0][i].toFixed(1)]; };
     const at = (k: number) => { const p = dp[k]; const i = Math.round(p.y) * w + Math.round(p.x); return { V: +V[i].toFixed(2), Cf: +Cf[i].toFixed(2), my: [0, 1, 2].map((c) => +myLow[c][i].toFixed(1)), rf: [0, 1, 2].map((c) => +rfLow[c][i].toFixed(1)), D: [0, 1, 2].map((c) => +D[c][i].toFixed(1)) }; };
-    Object.assign(dbg, { amt, base: { my: [myBase[1][0], myBase[2][0]], rf: [rfBase[1][0], rfBase[2][0]] }, cheekR: at(205), cheekL: at(425), lip: at(14), nose: at(6), npick: pick.length });
+    Object.assign(dbg, { amt, base: { my: [myBase[1][0], myBase[2][0]], rf: [rfBase[1][0], rfBase[2][0]] }, baseL: at0(), darkSkin: +darkSkin.toFixed(2), ita: +ita.toFixed(1), medL: [+myMedL.toFixed(1), +rfMedL.toFixed(1)],  cheekR: at(205), cheekL: at(425), lip: at(14), nose: at(6), npick: pick.length });
   }
   // 아이라인·속눈썹: 고른 사진에서 눈두덩 평균(얼굴 폭 5%)보다 어두운 정도를 내 눈두덩 평균 위에 놓는다(내 속눈썹이 더 어두우면 그대로)
   // 주근깨: 피부 평균(얼굴 폭 2%)보다 뚜렷이(L 2.5 넘게) 어두운 작은 점만(옮기면서 흐려지므로 2배)

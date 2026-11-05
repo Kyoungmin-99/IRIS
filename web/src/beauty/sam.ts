@@ -1,6 +1,6 @@
 // 눌러서 오려 내기(Segment Anything, SlimSAM-77, Apache-2.0, 양자화 약 14MB): 사진 모드에서 손톱을 찾는다.
 // 그림 한 장의 특징을 한 번 계산(수 초)해 두고, 점 하나마다 0.3초 안팎으로 그 물체의 마스크를 얻는다.
-// Transformers.js 가 Hugging Face 에서 받아 브라우저에 캐시한다(사진은 기기 밖으로 나가지 않음).
+// 모델 파일은 사이트 안(style-ai/models)에 두고, 없으면 Transformers.js 가 Hugging Face 에서 받는다(사진은 기기 밖으로 나가지 않음).
 
 const MODEL = 'Xenova/slimsam-77-uniform';
 
@@ -21,7 +21,11 @@ let loading: Promise<{ tf: TF; model: SamModelT; processor: ProcessorT }> | null
 function load() {
   loading ??= (async () => {
     const id = '@huggingface/transformers';
-    const tf = (await import(/* @vite-ignore */ id)) as unknown as TF;
+    const tf = (await import(/* @vite-ignore */ id)) as unknown as TF & { env: { allowLocalModels: boolean; localModelPath: string } };
+    // 모델 파일은 사이트 안(style-ai/models/Xenova/slimsam-77-uniform, Apache-2.0)에서 먼저 받는다:
+    // Hugging Face 에서만 받을 때 요청이 많으면 429(너무 많은 요청)로 막혀 네일이 '손톱을 찾는 중'에서 멈출 수 있었다
+    tf.env.allowLocalModels = true;
+    tf.env.localModelPath = new URL('style-ai/models/', document.baseURI).href;
     const [model, processor] = await Promise.all([tf.SamModel.from_pretrained(MODEL, { dtype: 'q8' }), tf.AutoProcessor.from_pretrained(MODEL)]);
     return { tf, model, processor };
   })();
