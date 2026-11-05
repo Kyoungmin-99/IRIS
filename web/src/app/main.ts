@@ -643,6 +643,13 @@ function applyHints(r: StyleResult, h: StyleHints): void {
   }
 }
 
+/** 사진 파일을 못 읽었을 때 안내: 브라우저의 영어 오류(The source image could not be decoded.) 대신 */
+function unreadablePhotoMsg(err: unknown): string {
+  const n = (err as { name?: string })?.name;
+  if (n === 'InvalidStateError' || n === 'EncodingError') return '사진 파일을 열지 못했어요(파일이 깨졌거나 이 브라우저가 못 여는 형식, 예: 아이폰 HEIC). JPG·PNG 로 골라 주세요';
+  return `사진을 처리하지 못했어요: ${(err as Error)?.message ?? err}`;
+}
+
 /** 고른 사진 파일 하나를 분석해 입힌다 */
 async function pickFile(f: File): Promise<void> {
   if (!f.type.startsWith('image/')) {
@@ -653,7 +660,7 @@ async function pickFile(f: File): Promise<void> {
     await applyPhoto(await createImageBitmap(f), (params.get('refmode') as PhotoMode | null) ?? 'auto', f);
   } catch (err) {
     console.error(err);
-    setStatus(`사진을 읽지 못했어요: ${(err as Error).message}`);
+    setStatus(unreadablePhotoMsg(err));
   }
 }
 
@@ -1062,6 +1069,11 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
     return chestPlacePlan(d.canvas, d.aspect);
   }
   const m = /^(forearm|upperArm|thigh|calf)(L|R)$/.exec(tattoo.place);
+  if (d?.canvas && !m) {
+    // 목(목·귀뒤)은 사진 모드에서 놓는 방법이 아직 없다: 고른 사진이 목 타투면 아무것도 안 바뀌고 안내도 없었다
+    tatNote = `고른 타투 자리(${PLACE_LABELS[tattoo.place]})는 사진 모드에서 아직 입힐 수 없어요. 📍 자리 고르기로 팔·다리·쇄골 아래를 골라 보세요`;
+    return null;
+  }
   if (!d?.canvas || !m) return null;
   const body = await myBodyOf();
   const legs = m[1] === 'thigh' || m[1] === 'calf';
@@ -3100,7 +3112,7 @@ async function openMyPhoto(f: File): Promise<void> {
   try {
     bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
   } catch (err) {
-    setStatus(`사진을 읽지 못했어요: ${(err as Error).message}`);
+    setStatus(unreadablePhotoMsg(err));
     return;
   }
   // 사진은 거울처럼 뒤집지 않는다
@@ -4043,7 +4055,8 @@ setInterval(() => {
   const now = performance.now();
   if (engine.lastFace) lastFaceSeen = now;
   // 네일·타투만 쓸 때는 손이나 몸이 보이면 얼굴 안내를 띄우지 않는다
-  guideEl.hidden = now - lastFaceSeen < 1200 || engine.lastHands.length > 0 || engine.lastPose !== null || engine.loopback?.running === true;
+  // 사진 모드는 움직일 수 없는 사진이라 안내가 소용없다: 손·팔만 찍은 내 사진(네일·타투)에도 얼굴 안내가 떠 있었다
+  guideEl.hidden = PHOTO_MODE || now - lastFaceSeen < 1200 || engine.lastHands.length > 0 || engine.lastPose !== null || engine.loopback?.running === true;
   if (!hudEl.hidden) {
     const lines = engine.metrics.hudLines(now);
     const src = engine.source;
