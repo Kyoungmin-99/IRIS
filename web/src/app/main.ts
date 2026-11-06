@@ -408,6 +408,10 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   }
   // 사진의 주제(AI 분야)가 아닌 것은 찾았어도 꺼 둔다: 립 사진의 머리색까지 바꾸지 않게. 칩을 누르면 켜진다
   const cats = new Set([r.ai?.raw?.category, r.ai?.raw?.secondary?.category].filter(isGroup));
+  // 긴 머리가 크게 나온 메이크업 화보는 스타일 AI 가 '헤어' 로 고르고 메이크업은 2위(0.19~0.26)라 화장이 꺼진 채 머리색만 바뀌었다
+  // (메이크업 사진 20장 중 3장). 헤어 사진의 메이크업 점수는 0~0.05 라 0.15 넘으면 메이크업도 켠다
+  const rank = (r.ai?.raw as { category_ranking?: { key: string; score: number }[] } | undefined)?.category_ranking;
+  if (r.makeup && (rank?.find((x) => x.key === 'makeup')?.score ?? 0) >= 0.15) cats.add('makeup');
   const on = (g: Group): boolean => cats.size === 0 || cats.has(g);
   const setOff = (keys: readonly Chip[], v: boolean): void => {
     for (const k of keys) if (v) off.add(k);
