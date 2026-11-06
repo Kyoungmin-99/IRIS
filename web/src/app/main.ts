@@ -1278,6 +1278,19 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
   // (사용자 손 사진 5장에 팔 안쪽·손목 타투 12장을 골랐을 때 아무것도 안 그려지고 안내도 없었다)
   // 어깨가 보이는 사진(긴소매 전신 등)은 손만 찍은 사진이 아니다: 손등에 작게 찍고 '손만 나온 사진' 안내가 떴다 → 아래 '옷에 가려' 안내로
   const shouldersSeen = !!body && Math.max(body.pose.vis[11] ?? 0, body.pose.vis[12] ?? 0) > 0.5;
+  // 몸이 안 나온 사진에 아래팔이 보이면 손등보다 팔에 먼저(손 + 아래팔 사진에 글씨가 손바닥에 8px 로 찍혔다). 손·손가락 타투만 손등 먼저
+  const placeLabel = lastStyle?.ai?.raw?.attributes?.find((x) => x.group === 'placement')?.label ?? '';
+  if (!body && !legs && !/손(?!목)/.test(placeLabel)) {
+    // 손가락만 크게 나온 사진도 길쭉한 피부 덩어리라: 보이는 팔 띠가 손 길이(손목 → 가운뎃손가락 뿌리)의 2.5배 넘을 때만 팔
+    const my = await myCloseArm();
+    const h0 = my ? await handOf() : null;
+    const handLen = h0 ? Math.hypot(h0.p[9].x - h0.p[0].x, h0.p[9].y - h0.p[0].y) : 0;
+    dbgTat({ armVsHand: my ? +(my.st.len / Math.max(1, handLen)).toFixed(2) : null });
+    if (my && (!h0 || my.st.len > handLen * 2.5)) {
+      const close = await closeArmPlacePlan(d.canvas, d.aspect);
+      if (close) return close;
+    }
+  }
   const hand = !legs && !shouldersSeen && (!body || !armsOf(body.pose, body.skin, engine.source.width, engine.source.height, false).some((x) => x.seen && x.vis >= 0.4)) ? await handOf() : null;
   if (hand) return handPlacePlan(canvasInk(d.canvas), hand);
   if (!body) {
