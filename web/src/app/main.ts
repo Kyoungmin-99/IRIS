@@ -1963,7 +1963,6 @@ async function updateStillHair(): Promise<void> {
   }
   // 팔 대 팔이 안 되면 고른 자리에 굽는다
   const placeOn = !plan && !!tattoo.design && !off.has('tattoo');
-  dbgTat({ tatOn, placeOn, place: tattoo.place, refTat: !!refTat, sameDesign: refTat?.design === tattoo.design, offTat: off.has('tattoo') });
   if (placeOn) plan = await placeTattooPlan();
   // 어느 길로도 놓을 자리를 못 찾았는데 안내가 없으면(손가락만 크게 찍은 사진, 풍경을 도안으로 읽은 몸통 타투 등)
   // 아무 변화 없이 끝나 무엇이 잘못됐는지 몰랐다 → 늘 안내를 남긴다
