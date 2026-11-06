@@ -24,7 +24,7 @@ from pathlib import Path
 
 from PIL import Image
 
-UA = "IRIS-research/1.0 (virtual try-on research; rudals906377@gmail.com)"
+UA = "IRIS-research/1.0 (virtual try-on research; https://github.com/rudals906377/IRIS)"
 SPLIT = {"val": "validation", "validation": "validation", "test": "test", "train": "train"}
 
 

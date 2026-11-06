@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 API = "https://commons.wikimedia.org/w/api.php"
-UA = "IRIS-research/1.0 (virtual try-on research; rudals906377@gmail.com)"
+UA = "IRIS-research/1.0 (virtual try-on research; https://github.com/rudals906377/IRIS)"
 OK = re.compile(r"^(cc0|public domain|pd|cc[- ]by(-sa)?( \d\.\d)?( [a-z\-]+)?)$", re.I)
 
 
