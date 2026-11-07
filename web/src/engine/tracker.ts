@@ -136,8 +136,21 @@ export class Tracker {
     return this.config;
   }
 
-  /** 설정을 적용한다. 모델·위임이 바뀌면 해당 작업만 다시 만든다. */
-  async configure(next: TrackerConfig, onStatus?: (msg: string) => void): Promise<void> {
+  private configQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * 설정을 적용한다. 모델·위임이 바뀌면 해당 작업만 다시 만든다.
+   * 여러 곳(네일·타투·설정)에서 겹쳐 불러도 한 번에 하나씩: 겹치면 둘 다 `!this.hands` 를 보고 모델을 두 개 만들어 하나가 새고,
+   * 먼저 끝난 쪽이 loading 을 내려 아직 만드는 중인 모델로 추적을 돌렸다.
+   */
+  configure(next: TrackerConfig, onStatus?: (msg: string) => void): Promise<void> {
+    const want = { ...next };
+    const run = this.configQueue.catch(() => undefined).then(() => this.configureNow(want, onStatus));
+    this.configQueue = run;
+    return run;
+  }
+
+  private async configureNow(next: TrackerConfig, onStatus?: (msg: string) => void): Promise<void> {
     this.loading = true;
     try {
       if (!this.fileset) {
@@ -153,6 +166,7 @@ export class Tracker {
       } else if (next.pose && (delegateChanged || next.poseModel !== prev.poseModel || !this.pose)) {
         onStatus?.(`자세 모델(${next.poseModel}) 불러오는 중…`);
         this.pose?.close();
+        this.pose = null; // 다시 만들다 실패해도 닫힌 모델이 남지 않게
         this.pose = await this.create((delegate) =>
           PoseLandmarker.createFromOptions(this.fileset!, {
             baseOptions: { modelAssetPath: POSE_MODELS[next.poseModel], delegate },
@@ -169,6 +183,7 @@ export class Tracker {
         onStatus?.('분할 모델 불러오는 중…');
         this.seg?.close();
         this.segHead?.close();
+        this.seg = this.segHead = null;
         const makeSeg = (delegate: Delegate): Promise<ImageSegmenter> =>
           ImageSegmenter.createFromOptions(this.fileset!, {
             baseOptions: { modelAssetPath: SEG_MODEL, delegate },
@@ -206,6 +221,7 @@ export class Tracker {
       if (next.hands && (!this.hands || delegateChanged)) {
         onStatus?.('손 모델 불러오는 중…');
         this.hands?.close();
+        this.hands = null; // 다시 만들다 실패해도 닫힌 모델이 남지 않게
         this.hands = await this.create((delegate) =>
           HandLandmarker.createFromOptions(this.fileset!, {
             baseOptions: { modelAssetPath: HAND_MODEL, delegate },
@@ -221,6 +237,7 @@ export class Tracker {
       if (next.face && (!this.face || delegateChanged)) {
         onStatus?.('얼굴 모델 불러오는 중…');
         this.face?.close();
+        this.face = null; // 다시 만들다 실패해도 닫힌 모델이 남지 않게
         this.face = await this.create((delegate) =>
           FaceLandmarker.createFromOptions(this.fileset!, {
             baseOptions: { modelAssetPath: FACE_MODEL, delegate },

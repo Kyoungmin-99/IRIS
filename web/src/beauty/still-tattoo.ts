@@ -18,7 +18,8 @@ function local(p: P, a: P, b: P, r: number): { t: number; s: number } {
   const dx = b.x - a.x, dy = b.y - a.y;
   const L2 = dx * dx + dy * dy || 1;
   const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2;
-  const s = ((p.x - a.x) * -dy + (p.y - a.y) * dx) / Math.sqrt(L2) / r;
+  // 반폭 0(축 두 점이 같거나 팔 폭을 못 잼)이면 0/0 = NaN 이 범위 검사를 다 통과해 상자 전체가 검게 칠해졌다
+  const s = ((p.x - a.x) * -dy + (p.y - a.y) * dx) / Math.sqrt(L2) / Math.max(r, 1e-3);
   return { t, s };
 }
 function at(a: P, b: P, r: number, t: number, s: number): P {
@@ -82,7 +83,8 @@ function sampleInk(ink: InkMap, x: number, y: number, o: Float32Array): void {
   const u = ((x - ink.rect.x) / ink.rect.w) * ink.w - 0.5, v = ((y - ink.rect.y) / ink.rect.h) * ink.h - 0.5;
   o[0] = o[1] = o[2] = 1;
   o[3] = 0;
-  if (u < -0.5 || v < -0.5 || u > ink.w - 0.5 || v > ink.h - 0.5) return;
+  // NaN 도 밖으로(부등호 비교는 NaN 이면 모두 거짓이라 전에는 걸러지지 않았다)
+  if (!(u >= -0.5 && v >= -0.5 && u <= ink.w - 0.5 && v <= ink.h - 0.5)) return;
   const uu = Math.max(0, Math.min(ink.w - 1.001, u)), vv = Math.max(0, Math.min(ink.h - 1.001, v));
   const xi = Math.floor(uu), yi = Math.floor(vv), fx = uu - xi, fy = vv - yi;
   const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;

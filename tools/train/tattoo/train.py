@@ -9,6 +9,7 @@ weights/{이름}.png 가 있으면 픽셀별 학습 가중치(0 = 모름, 배우
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -50,6 +51,17 @@ class InkData(torch.utils.data.Dataset):
         y = np.clip(y / 0.35, 0, 1)
         t = lambda a: torch.from_numpy(np.ascontiguousarray(a))  # noqa: E731
         return t(x).permute(2, 0, 1), t(y)[None], t(w)[None]
+
+
+def save_atomic(obj, path):
+    """저장 도중 컨테이너가 꺼져도 잘린 파일이 남지 않게: 임시 파일에 쓴 뒤 바꿔치기"""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    if isinstance(obj, str):
+        tmp.write_text(obj)
+    else:
+        torch.save(obj, tmp)
+    os.replace(tmp, path)
 
 
 def save_samples(x, y, p, path: Path) -> None:
@@ -131,8 +143,8 @@ def main() -> None:
                 print(f"  {step} 배치 ({(time.time() - t0) / step:.1f}초/배치)", flush=True)
             if time.time() - saved > 90:
                 # 컨테이너가 자주 다시 시작돼(차례가 끝나면 4~5분 안에 잠듦) 5분마다 저장하면 120 배치 안팎이 계속 날아갔다: 90초마다 가중치 저장
-                torch.save(model.state_dict(), out / "last.pt")
-                (out / "round_steps").write_text(str(a.step0 + step))
+                save_atomic(model.state_dict(), out / "last.pt")
+                save_atomic(str(a.step0 + step), out / "round_steps")
                 saved = time.time()
                 print(f"  {step} 배치 저장 (손실 {tot / ((step - 1) % len(dl) + 1):.3f})", flush=True)
             if step >= total:
@@ -151,7 +163,7 @@ def main() -> None:
         print(f"[{ep + 1}/{a.epochs}] 손실 {tot / max(1, (step - 1) % len(dl) + 1):.3f}  검증 IoU {iou:.3f}", flush=True)
         if iou > best:
             best = iou
-            torch.save(model.state_dict(), out / "best.pt")
+            save_atomic(model.state_dict(), out / "best.pt")
     print(f"가장 좋은 검증 IoU {best:.3f}", flush=True)
     model.load_state_dict(torch.load(out / "best.pt"))
     model.eval()

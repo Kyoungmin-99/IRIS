@@ -12,6 +12,17 @@ APP=$R/web/public/models/tattoo-ink.onnx
 cd $T
 mkdir -p $O
 log() { echo "$(date -u +%m-%d\ %H:%M) $*" >> $L; }
+# 끝난 바퀴의 저장본인데 ONNX 나 점수가 없는 것(내보내기·채점 도중 컨테이너가 꺼짐)을 마저 내보내고 채점
+score_pending() {
+  for pt in $(ls -t $O/snap_*.pt 2> /dev/null | head -3); do
+    s=$(basename $pt .pt)
+    grep -q "^${s}_c85 {" $L 2> /dev/null && continue
+    if [ ! -s $O/${s}_c85.onnx ]; then
+      python3 export.py $pt $O/${s}_c85.onnx.tmp --calib 0.85 > /dev/null 2>&1 && mv $O/${s}_c85.onnx.tmp $O/${s}_c85.onnx || { rm -f $O/${s}_c85.onnx.tmp; continue; }
+    fi
+    nice -n 5 python3 eval_real.py --lab $W/teach/lab ${s}_c85=$O/${s}_c85.onnx app=$APP >> $L 2>&1
+  done
+}
 while true; do
   # 실제 사진 조각(선생님 정답, 시험 전용 사진 제외)
   n=$(ls $W/teach/lab/*.json 2> /dev/null | wc -l)
@@ -58,7 +69,12 @@ PY
   # 잉크 없음 ×2: ×2(사진 763장) 때 맨살 팔 오검출이 2 → 5장이라 ×4 로 올렸지만, 사진이 1,300장을 넘은 뒤 ×4 는
   # 바퀴마다 잉크를 덜 잡아 IoU 가 0.53 → 0.44 로 떨어졌다(상자 밖 오검출 37 → 18%) → 앱 가중치에서 ×2 로 다시(첫 바퀴 IoU 0.50 · 맨살 팔 3장, 아직 앱 0.538 아래). NEGX 로 바꿔 시험
   [ -d $W/tatneg ] && D="$D $W/tatneg:${NEGX:-2}"
+  score_pending
   RES=$O/last.pt
+  # 잘린 저장본(저장 도중 꺼짐)으로 이어 하면 매번 불러오기에 실패해 학습이 영영 멈춘다 → 치워 두고 앱 가중치에서 다시
+  if [ -f $RES ] && ! python3 -c "import torch; torch.load('$RES', map_location='cpu')" 2> /dev/null; then
+    mv $RES $RES.bad; rm -f $O/round_steps; log "last.pt 가 깨져 치움 → 앱 가중치에서 다시"
+  fi
   if [ ! -f $RES ]; then
     python3 -c "import sys, torch; sys.path.insert(0, '$T'); from unet import from_onnx; torch.save(from_onnx('$APP', 0.85).state_dict(), '$O/from_app.pt')" && log "앱 ONNX 에서 가중치 되살림"
     RES=$O/from_app.pt
@@ -69,12 +85,12 @@ PY
   done_n=$(cat $O/round_steps 2> /dev/null || echo 0)
   left=$((600 - done_n)); [ $left -lt 60 ] && left=60
   python3 train.py --data $D --out $O --epochs 1 --steps $left --step0 $done_n --lr 2e-4 --ch 16,32,64,128,256 --freeze-bn --resume $RES >> $W/tattrain.log 2>&1 || { sleep 60; continue; }
-  rm -f $O/round_steps
   stamp=$(date -u +%m%d%H%M)
-  cp $O/last.pt $O/snap_$stamp.pt
-  python3 export.py $O/snap_$stamp.pt $O/snap_${stamp}_c85.onnx --calib 0.85 > /dev/null 2>&1
+  # 저장본을 먼저 남긴 뒤에 바퀴 진행을 지운다(그 사이에 꺼져도 끝난 바퀴가 사라지지 않게). 내보내기·채점은 score_pending 이 맡는다
+  cp $O/last.pt $O/snap_$stamp.pt.tmp && mv $O/snap_$stamp.pt.tmp $O/snap_$stamp.pt
+  rm -f $O/round_steps
   log "바퀴 끝 snap_$stamp"
-  nice -n 5 python3 eval_real.py --lab $W/teach/lab snap_${stamp}_c85=$O/snap_${stamp}_c85.onnx app=$APP >> $L 2>&1
+  score_pending
   # 저장본은 최근 6개만(디스크)
   ls -t $O/snap_*.pt 2> /dev/null | tail -n +7 | xargs -r rm -f
   ls -t $O/snap_*_c85.onnx 2> /dev/null | tail -n +7 | xargs -r rm -f

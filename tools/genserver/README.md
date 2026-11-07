@@ -71,6 +71,7 @@ GPU 메모리 6GB 이하면 `set IRIS_GEN_MAX_SIDE=512` 뒤 `run.bat`. GPU가 �
 - **가장 쉬운 방법: 임시 인터넷 주소(터널)**. GPU PC에서 `run.bat` 로 서버를 켠 뒤 **`python tunnel.py`**(= `tunnel.bat`) 실행 → 화면에 `https://xxxx.trycloudflare.com` 주소가 나온다.
   맥북의 웹 앱(https://rudals906377.github.io/IRIS/) → 설정(톱니바퀴) → **생성 서버 주소**에 그 주소를 넣는다. 같은 와이파이가 아니어도(집에서도) 된다.
   주의: 그 주소를 아는 사람은 누구나 서버를 쓸 수 있고, 사진이 Cloudflare를 거쳐 전달된다(암호화됨). 창을 닫으면 주소가 사라지고 다음에 켜면 새 주소가 나온다.
+- **받는 요청**: 서버는 IRIS 배포 사이트(`https://rudals906377.github.io`)와 이 컴퓨터·사설망 주소(localhost, 127.0.0.1, 192.168.x.x 등)에서 온 브라우저 요청만 받는다(다른 사이트가 몰래 부르지 못하게). 다른 주소에서 띄운 웹 앱을 쓰려면 `IRIS_ALLOW_ORIGINS=https://내주소` 를 설정하고 켠다. 그림은 한 장 30MB·4096×4096 까지, 생성 단계는 60 까지, 기다리는 작업은 4개까지.
 - 같은 와이파이 안에서만: `python server.py --preload --host 0.0.0.0` 로 켜고 맥북에서 `http://<GPU PC의 IP>:8765` 를 쓴다.
   단, 배포된 https 사이트에서 http 주소를 부르는 건 크롬이 막으므로, 이 방법은 맥북에서 웹 앱을 직접 띄울 때(`web` 폴더에서 `npm run dev`)만 된다. 윈도우 방화벽 허용 창도 떠야 한다.
 

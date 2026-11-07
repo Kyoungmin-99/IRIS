@@ -5,3 +5,19 @@ __pycache__/
 # 학습·평가용 자동 라벨 자료(용량 큼, 커밋 안 함)
 /data/
 tools/eval/results/*.jpg
+
+# 사진은 커밋하지 않는다(학습·시험 사진은 FINDE-photos 비공개 저장소, 수집 사진은 /tmp 작업 폴더): 출처·라이선스를 모르는 사진이 공개로 나가지 않게
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.gif
+
+# 생성 서버·모델 서버 setup 이 만드는 큰 폴더(실수로 git add -A 하면 GB 단위가 올라간다)
+venv/
+venv_*/
+cloudflared*
+HairFastGAN/
+Stable-*/
+AnyDoor/

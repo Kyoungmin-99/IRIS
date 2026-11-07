@@ -4,7 +4,7 @@
 import { chromium } from 'playwright';
 
 export const BASE = process.env.IRIS_URL ?? 'http://localhost:4173';
-export const CHROME = process.env.IRIS_CHROME ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+export const CHROME = process.env.IRIS_CHROME ?? '/opt/pw-browsers/chromium';
 export const ARGS = [
   '--ignore-certificate-errors',
   '--use-angle=swiftshader',

@@ -65,7 +65,8 @@ export class BeautyEngine {
   readonly source: VideoSource;
   readonly tracker: Tracker;
   readonly face = new FaceTracker();
-  readonly renderer: Renderer;
+  /** 그래픽(WebGL) 상태를 잃었다 되찾으면 새로 만든다 */
+  renderer: Renderer;
   readonly metrics = new Metrics();
   settings: EngineSettings = { ...DEFAULT_SETTINGS };
   /** 지금 적용 중인 메이크업 */
@@ -86,10 +87,10 @@ export class BeautyEngine {
   private prevHead: { x: number; y: number; w: number } | null = null;
   lastRegions: FaceRegions | null = null;
   lastTrack: TrackResult | null = null;
-  private readonly makeup: MakeupRenderer;
-  private readonly hairFx: HairColorRenderer;
-  private readonly tattooFx: TattooRenderer;
-  private readonly nailFx: NailRenderer;
+  private makeup: MakeupRenderer;
+  private hairFx: HairColorRenderer;
+  private tattooFx: TattooRenderer;
+  private nailFx: NailRenderer;
   /** 자체 손톱 모델(선택): 손마다 하나씩 실행기 */
   nailNets: HairNet[] = [];
   private nailCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
@@ -103,6 +104,9 @@ export class BeautyEngine {
   private readonly overlay: CanvasRenderingContext2D;
   private readonly lumaCtx: CanvasRenderingContext2D;
   private loopRaf = 0;
+  private glLost = false;
+  /** 그래픽 상태를 잃음(true)·되찾음(false) 알림: 앱이 안내를 띄운다 */
+  onGraphicsLost: ((lost: boolean) => void) | null = null;
   private captureWaiters: ((r: { image: ImageData; face: FaceFrame | null }) => void)[] = [];
 
   constructor(opts: { video: HTMLVideoElement; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; wasmBase: string }) {
@@ -112,6 +116,26 @@ export class BeautyEngine {
     this.hairFx = new HairColorRenderer(this.renderer.gl);
     this.tattooFx = new TattooRenderer(this.renderer.gl);
     this.nailFx = new NailRenderer(this.renderer.gl);
+    // 모바일에서 백그라운드에 갔다 오거나 GPU 가 리셋되면 WebGL 상태를 잃는다. 막아 두지 않으면 화면이 영구히 검게 멈췄다:
+    // 잃는 동안은 그리지 않고, 되찾으면 셰이더·텍스처를 새로 만든다(입힐 것(look·타투·머리)은 엔진이 들고 있어 그대로 이어진다)
+    opts.canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.glLost = true;
+      this.onGraphicsLost?.(true);
+    });
+    opts.canvas.addEventListener('webglcontextrestored', () => {
+      try {
+        this.renderer = new Renderer(opts.canvas);
+        this.makeup = new MakeupRenderer(this.renderer.gl);
+        this.hairFx = new HairColorRenderer(this.renderer.gl);
+        this.tattooFx = new TattooRenderer(this.renderer.gl);
+        this.nailFx = new NailRenderer(this.renderer.gl);
+        this.glLost = false;
+        this.onGraphicsLost?.(false);
+      } catch (err) {
+        console.error('그래픽 다시 만들기 실패', err);
+      }
+    });
     this.tracker = new Tracker(opts.wasmBase);
     this.overlay = opts.overlay.getContext('2d')!;
     const luma = document.createElement('canvas');
@@ -136,7 +160,7 @@ export class BeautyEngine {
     const video = this.source.frame;
     const w = this.source.width;
     const h = this.source.height;
-    if (!w || !h) return;
+    if (!w || !h || this.glLost) return;
 
     if (this.loopback?.running) {
       this.loopback.onCameraFrame(info.now, this.sampleLuma(video));

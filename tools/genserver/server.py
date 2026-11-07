@@ -1,7 +1,8 @@
 """IRIS 생성 서버(사진 한 장 모드).
 
 웹 앱이 웹캠 한 장 + 참고 사진 + 설명을 보내면, 헤어 모양·네일아트·타투를 생성형 AI로 그려 돌려준다.
-사용자 컴퓨터(엔비디아 GPU 권장)에서 돌리고, 사진은 이 컴퓨터 밖으로 나가지 않는다.
+사용자 컴퓨터(엔비디아 GPU 권장)에서 돌린다. 사진은 이 컴퓨터로만 온다(터널(tunnel.py)을 켜면 Cloudflare 를 거쳐 전달된다).
+받는 요청은 IRIS 배포 사이트와 이 컴퓨터·사설망 주소의 브라우저 요청만(IRIS_ALLOW_ORIGINS 로 더함).
 
 실행:  python server.py [--port 8765] [--dry-run] [--host 127.0.0.1]
 확인:  http://127.0.0.1:8765/health
@@ -29,10 +30,25 @@ from blend import harmonize
 from pipelines import Generator, GenRequest, lock_hair_color
 
 app = FastAPI(title="IRIS 생성 서버")
-# 웹 앱(다른 주소)에서 부를 수 있게. 로컬 전용이므로 모든 출처 허용
+# 웹 앱(다른 주소)에서 부를 수 있게. 전에는 모든 출처를 허용해, 서버를 켜 둔 동안 사용자가 연 아무 웹사이트나 사진 생성·얼굴 바꾸기를
+# 부를 수 있었다 → IRIS 배포 사이트와 이 컴퓨터·사설망 주소만. 다른 주소는 IRIS_ALLOW_ORIGINS(쉼표로 구분)에 더한다
 import inspect
+import os
+import re
 
-_cors_kwargs = dict(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+ALLOWED_ORIGIN_RE = (
+    r"^https?://(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$"
+    r"|^https://rudals906377\.github\.io$"
+)
+EXTRA_ORIGINS = [o.strip().rstrip("/") for o in os.environ.get("IRIS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+
+
+def origin_ok(origin: str | None) -> bool:
+    """브라우저가 보낸 Origin 이 허용된 곳인가(Origin 이 없으면 브라우저 밖의 요청: 이 컴퓨터의 curl·시험 스크립트)"""
+    return origin is None or origin in EXTRA_ORIGINS or re.match(ALLOWED_ORIGIN_RE, origin) is not None
+
+
+_cors_kwargs = dict(allow_origin_regex=ALLOWED_ORIGIN_RE, allow_origins=EXTRA_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 # 최신 Starlette: https 사이트 → 127.0.0.1 요청(사설망 접근)을 명시적으로 허용해야 한다
 if "allow_private_network" in inspect.signature(CORSMiddleware.__init__).parameters:
     _cors_kwargs["allow_private_network"] = True
@@ -41,9 +57,15 @@ app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 @app.middleware("http")
 async def allow_private_network(request, call_next):
-    """https 사이트(GitHub Pages)에서 내 컴퓨터(127.0.0.1)로 부를 때 크롬이 요구하는 헤더."""
+    """https 사이트(GitHub Pages)에서 내 컴퓨터(127.0.0.1)로 부를 때 크롬이 요구하는 헤더.
+    허용하지 않은 출처는 막는다(CORS 는 응답 읽기만 막고, 미리 묻지 않는 단순 POST 는 서버까지 와서 실행됐다)."""
+    from fastapi.responses import JSONResponse
+
+    if not origin_ok(request.headers.get("origin")):
+        return JSONResponse({"detail": "허용하지 않은 사이트에서 온 요청입니다(IRIS_ALLOW_ORIGINS 로 더할 수 있음)"}, status_code=403)
     resp = await call_next(request)
-    resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    if origin_ok(request.headers.get("origin")):
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
     return resp
 
 masker = Masker()
@@ -58,11 +80,23 @@ def log(msg: str) -> None:
     del LOG[:-200]
 
 
+MAX_IMAGE_BYTES = 30 * 1024 * 1024  # 받는 그림 하나의 크기 상한(base64 기준)
+MAX_IMAGE_PIXELS = 4096 * 4096
+MAX_STEPS = 60  # 단계 수 상한: 전에는 steps=1000000 하나로 GPU 를 붙잡을 수 있었다
+
+
 def decode(data_url: str) -> Image.Image:
     if "," in data_url:
         data_url = data_url.split(",", 1)[1]
+    if len(data_url) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "그림이 너무 큽니다")
     try:
-        return Image.open(io.BytesIO(base64.b64decode(data_url))).convert("RGB")
+        im = Image.open(io.BytesIO(base64.b64decode(data_url)))
+        if im.width * im.height > MAX_IMAGE_PIXELS:
+            raise HTTPException(413, f"그림이 너무 큽니다({im.width}×{im.height}, 긴 변 4096 이하로)")
+        return im.convert("RGB")
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"그림을 읽지 못했습니다: {e}") from e
 
@@ -125,7 +159,8 @@ def _realistic_health() -> dict | None:
 # 비동기 작업: 무료 터널(trycloudflare)은 응답을 100초까지만 기다리므로, 오래 걸리는 생성은
 # /generate/start 로 작업 번호를 바로 받고 /job/{id} 로 2초마다 물어보는 방식을 쓴다(웹 앱 기본).
 JOBS: dict[str, dict] = {}
-GPU_LOCK = threading.Lock()  # 생성은 한 번에 하나(GPU 메모리)
+GPU_LOCK = threading.RLock()  # 생성은 한 번에 하나(GPU 메모리). 바로 받는 /generate 도 같은 잠금(전에는 작업과 겹쳐 두 개가 함께 돌았다)
+MAX_JOBS = 4  # 기다리는 작업 수 상한(요청마다 스레드를 끝없이 만들지 않게)
 
 
 def _run_job(job_id: str, body: "GenerateBody") -> None:
@@ -145,6 +180,8 @@ def generate_start(body: "GenerateBody") -> dict:
     now = time.time()
     for k in [k for k, j in JOBS.items() if now - j["t0"] > 900]:
         del JOBS[k]
+    if sum(1 for j in JOBS.values() if j["status"] == "running") >= MAX_JOBS:
+        raise HTTPException(429, "생성 작업이 밀려 있습니다. 잠시 뒤 다시 시도해 주세요")
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"status": "running", "t0": now}
     threading.Thread(target=_run_job, args=(job_id, body), daemon=True).start()
@@ -168,6 +205,12 @@ def job_status(job_id: str) -> dict:
 
 @app.post("/generate")
 def generate(body: GenerateBody) -> dict:
+    body.steps = max(1, min(MAX_STEPS, body.steps))
+    with GPU_LOCK:
+        return _generate(body)
+
+
+def _generate(body: GenerateBody) -> dict:
     if body.category not in ("hair", "nail", "tattoo", "makeup"):
         raise HTTPException(400, "category는 hair, nail, tattoo, makeup 중 하나여야 합니다")
     img = decode(body.image)

@@ -272,3 +272,20 @@ test('메이크업: 고른 사진의 붉어진 이마(왁싱 자극·햇볕)는 
   assert.ok(dForehead < 6, `이마 붉은 기 +${dForehead.toFixed(1)}`);
   assert.ok(dCheek > 8, `볼 블러셔 +${dCheek.toFixed(1)}`);
 });
+
+test('메이크업: 피부 분할이 애매해(믿음 0.5) 맨 피부 표본이 비어도 얼굴 전체를 분홍으로 띄우지 않는다', () => {
+  const W = 200, H = 220, pts = face(100, 110, 60);
+  const my = new Uint8ClampedArray(W * H * 4), ref = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    my.set([200, 170, 150, 255], i * 4);
+    ref.set([215, 160, 145, 255], i * 4);
+  }
+  const cheekA = (s: number): number => {
+    const out = transferMakeup(my, W, H, pts, ref, W, H, pts, FACE_OVAL, { lip: 1, eye: 1, skin: 1 }, new Float32Array(W * H).fill(s), null, null, {});
+    const t = new Float32Array(3), i = (100 * W + 70) * 4;
+    rgb2lab(out[i], out[i + 1], out[i + 2], t);
+    return t[1];
+  };
+  const sure = cheekA(1), unsure = cheekA(0.5);
+  assert.ok(Math.abs(unsure - sure) < 1, `볼 a: 확실 ${sure.toFixed(1)} · 애매 ${unsure.toFixed(1)}`);
+});

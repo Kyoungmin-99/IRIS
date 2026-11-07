@@ -11,6 +11,7 @@ type Ort = {
     create(url: string, opts: { executionProviders: string[] }): Promise<{
       inputNames: string[];
       outputNames: string[];
+      release?(): Promise<void>;
       run(feeds: Record<string, unknown>): Promise<Record<string, { data: Float32Array; dims: number[] }>>;
     }>;
   };
@@ -88,6 +89,8 @@ export class HairNet {
   }
 
   close(): void {
+    // 세션을 풀지 않으면 켰다 껐다 할 때마다 WebGPU·WASM 메모리가 쌓인다
+    void this.session?.release?.().catch(() => undefined);
     this.session = null;
     this.last = null;
   }

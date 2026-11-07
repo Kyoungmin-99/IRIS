@@ -175,3 +175,15 @@ test('가까운 팔 사진의 띠(closeStrip): 사진 밖으로 이어지는 팔
   // 굵은 쪽(왼쪽) → 가는 쪽
   assert.ok(st.p[0].x < st.p[st.p.length - 1].x);
 });
+
+test('팔 잉크 옮기기: 축 두 점이 같고 반폭이 0 이어도 사진을 검게 칠하지 않는다', () => {
+  const W = 40, H = 40, dst = new Uint8ClampedArray(W * H * 4).fill(200);
+  const skin = new Float32Array(W * H).fill(1);
+  const ink: InkMap = { rgba: new Uint8ClampedArray(8 * 8 * 4).fill(255), w: 8, h: 8, rect: { x: 10, y: 10, w: 8, h: 8 } };
+  const p = { x: 20, y: 20 };
+  const arm: Arm = { s: p, e: p, w: p, rUp: 0, rLo: 0 };
+  const out = transferArmInk(dst, W, H, arm, skin, ink, arm, false, 1);
+  let black = 0;
+  for (let i = 0; i < W * H; i++) if (out[i * 4] < 5 && out[i * 4 + 1] < 5 && out[i * 4 + 2] < 5) black++;
+  assert.equal(black, 0);
+});

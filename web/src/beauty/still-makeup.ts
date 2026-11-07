@@ -176,8 +176,18 @@ export function transferMakeup(
   // 이마·콧등 같은 고정 자리는 코까지 칠한 블러셔에 틀린다
   const myBase = [wblur(myL[0], wBase, w, h, rB)];
   const rfBase = [wblur(rfL[0], wBase, w, h, rB)];
+  // 맨 피부 표본. 피부 분할이 애매하면(믿음이 0.5 안팎) 표본이 비어 기준색이 0 → ITA −89° 로 '어두운 피부'에 고정되고 얼굴 전체가 분홍으로 떴다
+  // → 문턱을 낮춰 가며 모으고, 그래도 모자라면 얼굴 안 전체
   const pick: number[] = [];
-  for (let i = 0; i < n; i += 2) if (wBase[i] > 0.5) pick.push(i);
+  for (const th of [0.5, 0.2, 0.05]) {
+    pick.length = 0;
+    for (let i = 0; i < n; i += 2) if (wBase[i] > th) pick.push(i);
+    if (pick.length >= 50) break;
+  }
+  if (pick.length < 50) {
+    pick.length = 0;
+    for (let i = 0; i < n; i += 2) if (faceM[i] > 0.5) pick.push(i);
+  }
   const pct = (ch: Float32Array, q: number) => {
     const v = pick.map((i) => ch[i]).sort((x, y) => x - y);
     return new Float32Array(n).fill(v.length ? v[Math.floor((v.length - 1) * q)] : 0);

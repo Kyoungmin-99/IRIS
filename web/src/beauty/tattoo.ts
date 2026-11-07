@@ -68,7 +68,7 @@ export class TattooRenderer {
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
-    this.prog = compileProgram(gl, VS, FS, ['uDesign', 'uCam', 'uSeg', 'uGF', 'uUseGF', 'uSize', 'uAmount', 'uInk', 'uMultiply']);
+    this.prog = compileProgram(gl, VS, FS, ['uDesign', 'uCam', 'uSeg', 'uGF', 'uUseGF', 'uSize', 'uAmount', 'uInk', 'uMultiply', 'uSoft']);
     this.vao = gl.createVertexArray()!;
     this.vbo = gl.createBuffer()!;
     this.ibo = gl.createBuffer()!;

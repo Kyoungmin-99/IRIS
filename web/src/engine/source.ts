@@ -70,12 +70,16 @@ export class VideoSource {
     return this.stream?.getVideoTracks()[0]?.getSettings() ?? null;
   }
 
+  /** 여는 차례 번호: 전환 연타·화질 자동 조정이 겹치면 늦게 온 스트림이 앞 스트림을 덮어써 앞 것의 카메라가 꺼지지 않았다 */
+  private openSeq = 0;
+
   async openCamera(req: CameraRequest): Promise<void> {
     this.close();
+    const seq = ++this.openSeq;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('이 브라우저에서는 카메라를 사용할 수 없습니다(HTTPS 필요).');
     }
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         facingMode: req.facing ?? 'user',
@@ -84,6 +88,12 @@ export class VideoSource {
         frameRate: { ideal: req.fps },
       },
     });
+    if (seq !== this.openSeq) {
+      // 그 사이 다른 열기·닫기가 있었다: 이 스트림은 바로 끈다
+      for (const t of stream.getTracks()) t.stop();
+      return;
+    }
+    this.stream = stream;
     this.video.srcObject = this.stream;
     this.kind = 'camera';
     await this.video.play();
@@ -164,8 +174,12 @@ export class VideoSource {
       let timer = 0;
       const tick = (): void => {
         if (stopped) return;
-        cb({ now: performance.now(), mediaTime: performance.now() / 1000 });
-        timer = window.setTimeout(tick, 66);
+        // 한 프레임에서 예외가 나도 다음 프레임은 예약한다(안 그러면 화면이 조용히 영구 정지)
+        try {
+          cb({ now: performance.now(), mediaTime: performance.now() / 1000 });
+        } finally {
+          if (!stopped) timer = window.setTimeout(tick, 66);
+        }
       };
       timer = window.setTimeout(tick, 0);
       this.stopLoop = () => {
@@ -178,8 +192,8 @@ export class VideoSource {
       let handle = 0;
       const step = (now: number, md: VideoFrameCallbackMetadata): void => {
         if (stopped) return;
-        cb({ now, captureTime: md.captureTime, presentedFrames: md.presentedFrames, mediaTime: md.mediaTime });
         handle = video.requestVideoFrameCallback(step);
+        cb({ now, captureTime: md.captureTime, presentedFrames: md.presentedFrames, mediaTime: md.mediaTime });
       };
       handle = video.requestVideoFrameCallback(step);
       this.stopLoop = () => {
@@ -193,11 +207,11 @@ export class VideoSource {
     let raf = 0;
     const tick = (now: number): void => {
       if (stopped) return;
+      raf = requestAnimationFrame(tick);
       if (video.currentTime !== last) {
         last = video.currentTime;
         cb({ now, mediaTime: video.currentTime });
       }
-      raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     this.stopLoop = () => {
@@ -207,6 +221,7 @@ export class VideoSource {
   }
 
   close(): void {
+    this.openSeq++; // 열리는 중인 카메라가 있으면 도착하자마자 끄게
     this.stopLoop?.();
     this.stopLoop = null;
     if (this.stillTimer) clearInterval(this.stillTimer);

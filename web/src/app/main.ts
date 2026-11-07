@@ -85,6 +85,7 @@ const engine = new BeautyEngine({
 });
 // 개발 도구·자동 시험에서 상태를 확인할 수 있게 노출
 (window as unknown as { iris: BeautyEngine }).iris = engine;
+engine.onGraphicsLost = (lost) => setStatus(lost ? '화면을 다시 준비하는 중…(그래픽이 잠시 끊겼습니다)' : '');
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const trackerConfig: TrackerConfig = {
@@ -189,7 +190,10 @@ function applyTattooToEngine(): void {
   // 타투는 몸 관절점이 필요하다: 처음 켤 때 자세 추적을 켠다(모델을 한 번 내려받음)
   if (d && !trackerConfig.pose) {
     trackerConfig.pose = true;
-    if (running) void engine.tracker.configure(trackerConfig, modelStatus).then(() => modelStatus(''));
+    if (running) void engine.tracker.configure(trackerConfig, modelStatus).then(() => modelStatus(''), (err) => {
+      console.warn(err);
+      modelStatus('모델을 받지 못했어요. 인터넷 연결을 확인해 주세요');
+    });
   }
 }
 
@@ -214,7 +218,10 @@ function applyLookToEngine(): void {
     // 네일도 사진에 굽는다(찾은 손톱이 있을 때). 아직 없으면 실시간 네일을 미리보기로 둔다
     if (myNails.length && refNailArt()) engine.nail = null;
     scheduleStillHair();
-    if (chosen.nail.color && !off.has('nail')) void ensureNails();
+    if (chosen.nail.color && !off.has('nail')) ensureNails().catch((err) => {
+      console.warn('손톱 찾기 실패', err);
+      setStatus('손톱을 찾지 못했어요(모델을 불러오지 못함). 손톱을 눌러 직접 더할 수 있어요');
+    });
   }
   const n = chosen.nail;
   engine.nail = n.color && !off.has('nail') ? { color: n.color, color2: NAIL_COLOR2[nailStyle], style: nailStyle, amount: amt(n.amount), length: nailLength } : null;
@@ -224,7 +231,10 @@ function applyLookToEngine(): void {
   // 네일은 손 점이 필요하다: 처음 켤 때 손 추적을 켠다
   if (n.color && !trackerConfig.hands) {
     trackerConfig.hands = true;
-    if (running) void engine.tracker.configure(trackerConfig, modelStatus).then(() => modelStatus(''));
+    if (running) void engine.tracker.configure(trackerConfig, modelStatus).then(() => modelStatus(''), (err) => {
+      console.warn(err);
+      modelStatus('모델을 받지 못했어요. 인터넷 연결을 확인해 주세요');
+    });
   }
 }
 
@@ -297,8 +307,7 @@ function clearAll(): void {
   shadowOut = null;
   tattoo.design = null;
   tattoo.along = tattoo.across = undefined;
-  hairSticker = null;
-  engine.overlayDraw = null;
+  hairSticker = null; // 그리는 훅(engine.overlayDraw)은 그대로 둔다: 다시 입히면 바로 보이게
   off.clear();
   strength = 1;
   amountEl.value = '1';
@@ -337,7 +346,19 @@ type Group = (typeof GROUPS)[number];
 const MAKEUP_PARTS = ['lip', 'blush', 'shadow', 'liner', 'brow', 'contour', 'base'] as const;
 const isGroup = (x: unknown): x is Group => (GROUPS as readonly string[]).includes(x as string);
 
+/** 새 사진을 고르면 앞 사진의 분석 결과는 버린다(늦게 끝난 앞 사진이 칩·화장 원본을 덮어써 두 사진이 섞였다) */
+class Superseded extends Error {
+  constructor() {
+    super('새 사진을 골라 앞 사진 분석을 그만둠');
+  }
+}
+let photoSeq = 0;
+
 async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMode, file?: File, original?: ImageBitmap): Promise<StyleResult> {
+  const seq = ++photoSeq;
+  const check = (): void => {
+    if (seq !== photoSeq) throw new Superseded();
+  };
   nailLabelColor = null;
   /** 도안 시트 전체를 한 작품으로 입힐 때: 부위를 꽉 채우게 크게 */
   let sheetWhole = false;
@@ -345,6 +366,7 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   if (source instanceof ImageBitmap) lastSource = original ?? source;
   setStatus('사진 보는 중…');
   let r = await photoAnalyzer.analyze(source, mode, setStatus);
+  check();
   // 스타일 AI: 사진이 무엇에 관한 것인지(메이크업·헤어·네일·타투)와 무늬·모양·기법. 색은 위에서 잰 값을 쓴다.
   // 실패해도 색 적용은 계속한다
   if ($<HTMLInputElement>('opt-style-ai').checked && source instanceof ImageBitmap) {
@@ -354,11 +376,13 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
         if (p.status === 'progress' && p.file && p.progress !== undefined) setStatus(`스타일 AI 모델 내려받는 중 ${Math.round(p.progress)}%`);
         else if (p.status === 'ready') setStatus('스타일 읽는 중…');
       });
+      check();
       // 측정이 AI 가 말한 분야를 못 찾았으면(예: 등 타투 사진에서 손만 찾아 네일로 읽음) 그 분야로 다시 본다
       const want = ai.category;
       if (mode === 'auto' && isGroup(want) && !r[want]) {
         setStatus('사진 다시 보는 중…');
         const r2 = await photoAnalyzer.analyze(source, want, setStatus);
+        check();
         // 흰 종이 위 도안 시트(사람 없음)를 AI 가 타투로 읽었으면 손 찾기가 그림 속 짐승 발톱을 손으로 잡아 낸 '네일'은 버린다
         // (올드스쿨 시트 18번이 네일로 읽혀 타투를 아예 입히지 못했음) → 아래 도안 시트 길로 간다
         const drawnNail = want === 'tattoo' && !r.faces && !r.makeup && !r.hair && looksLikeDesign(r.thumb);
@@ -368,6 +392,7 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
       applyHints(r, r.ai.hints);
       if (r.summary.startsWith('사진에서 가져왔어요')) r.summary = summaryOf(r);
     } catch (err) {
+      if (err instanceof Superseded) throw err;
       console.warn('스타일 AI를 쓰지 못했습니다(색만 적용)', err);
     }
   }
@@ -381,8 +406,10 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   if (!r.makeup && !r.hair && !r.nail && !r.tattoo && file && !aiOther && !whiteSheet && looksLikeDesign(r.thumb)) {
     try {
       r.tattoo = await designFromFile(file);
+      check();
       r.summary = '그림을 타투 도안으로 가져왔어요';
     } catch (err) {
+      if (err instanceof Superseded) throw err;
       console.warn('도안으로 열지 못했습니다', err);
     }
   }
@@ -417,6 +444,8 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
     for (const k of keys) if (v) off.add(k);
     else off.delete(k);
   };
+  check();
+  if (source instanceof ImageBitmap) lastSource = original ?? source;
   lastStyle = r;
   strength = 1;
   amountEl.value = '1';
@@ -468,6 +497,7 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
         console.warn('타투 잉크 모델을 쓰지 못했습니다(규칙만)', err);
         return undefined;
       });
+      check();
       if (hi.scale > 1 || hi.src.inkProb) {
         const rc = r.tattooSrc.rect;
         let rect: { x: number; y: number; w: number; h: number } | null = { x: rc.x * hi.scale, y: rc.y * hi.scale, w: rc.w * hi.scale, h: rc.h * hi.scale };
@@ -665,6 +695,7 @@ async function pickFile(f: File): Promise<void> {
   try {
     await applyPhoto(await createImageBitmap(f), (params.get('refmode') as PhotoMode | null) ?? 'auto', f);
   } catch (err) {
+    if (err instanceof Superseded) return;
     console.error(err);
     setStatus(unreadablePhotoMsg(err));
   }
@@ -1955,12 +1986,32 @@ async function makeupPlan(): Promise<MkPlan | null> {
   return r;
 }
 
-async function updateStillHair(): Promise<void> {
-  if (!PHOTO_MODE || !photoOriginal || engine.source.kind !== 'image' || swapMode) return;
-  if (stillHairBusy) {
-    await stillHairBusy;
-    return updateStillHair();
+/**
+ * 굽기는 한 번에 하나만. 전에는 '굽는 중' 표시를 계획(팔·몸·화장 찾기, 수십 초)을 다 기다린 뒤에야 세워서, 그사이 진하기를 바꾸면
+ * 굽기가 여러 개 동시에 돌고 늦게 끝난 옛 진하기 결과가 화면에 남았다 → 도는 중에 다시 부르면 끝난 뒤 최신 설정으로 한 번 더
+ */
+let stillRun: Promise<void> | null = null;
+let stillAgain = false;
+function updateStillHair(): Promise<void> {
+  if (stillRun) {
+    stillAgain = true;
+    return stillRun;
   }
+  const run = (async () => {
+    do {
+      stillAgain = false;
+      await updateStillHairOnce();
+    } while (stillAgain);
+  })().finally(() => {
+    if (stillRun === run) stillRun = null;
+  });
+  stillRun = run;
+  return run;
+}
+
+async function updateStillHairOnce(): Promise<void> {
+  if (!PHOTO_MODE || !photoOriginal || engine.source.kind !== 'image' || swapMode) return;
+  if (stillHairBusy) await stillHairBusy;
   const orig = photoOriginal;
   const h = chosen.hair;
   // 분포를 그대로 옮기므로 진하기 1 이 '고른 사진 그대로'(분석의 amount 는 셰이더용이라 쓰지 않는다)
@@ -2076,6 +2127,7 @@ async function updateStillHair(): Promise<void> {
         out = transferMakeup(out, base.w, base.h, mkp.myPts, mkp.ref, mkp.rw, mkp.rh, mkp.refPts, FACE_OVAL, mk, mkp.mySkin, mkp.refSkin, mkp.refHands, ((window as unknown as { irisMk: Record<string, unknown> }).irisMk = {}));
       }
       if (nailOn) {
+        pruneStaleNails();
         out = new Uint8ClampedArray(out);
         const art = refNailArt()!;
         myNails.forEach((n, i) => {
@@ -2103,8 +2155,9 @@ async function updateStillHair(): Promise<void> {
       stillHairKey = key;
       setStatus(bakeNote());
     } catch (err) {
-      console.warn('사진 염색 실패', err);
-      setStatus('');
+      console.warn('사진 굽기 실패', err);
+      // 전에는 안내를 지우기만 해서 아무 변화도 이유도 없었다
+      setStatus('사진에 입히지 못했어요(모델을 불러오지 못했거나 사진이 너무 커요). 잠시 뒤 다시 시도해 주세요');
     }
   })();
   stillHairBusy = job;
@@ -2226,7 +2279,14 @@ function stillCanvas(): HTMLCanvasElement {
 }
 function mySamImage(): Promise<SamImage> {
   const orig = photoOriginal!;
-  if (mySam?.src !== orig) mySam = { src: orig, p: samImage(stillCanvas()) };
+  if (mySam?.src !== orig) {
+    const entry = { src: orig, p: samImage(stillCanvas()) };
+    mySam = entry;
+    // 실패(모델 받기 실패 등)는 기억하지 않는다: 전에는 실패한 약속을 사진 단위로 붙잡아 이후 누를 때마다 멈췄다
+    entry.p.catch(() => {
+      if (mySam === entry) mySam = null;
+    });
+  }
   return mySam.p;
 }
 /**
@@ -2745,7 +2805,8 @@ async function findRefNails(): Promise<void> {
   }
   refNails = { src, rgba, w, h, nails: rankNails(rgba, w, h, best) };
   // 사진 분석이 손을 못 찾아 손톱 색을 배경에서 잘못 읽었을 수 있다 → 찾은 손톱 픽셀의 가운데 색으로 바로잡는다
-  if (best.length && chosen.nail.color) {
+  // 그사이 다른 사진을 골랐으면 그 사진의 네일 색을 덮어쓰지 않는다
+  if (best.length && chosen.nail.color && src === lastSource) {
     const rs: number[] = [], gs: number[] = [], bs: number[] = [];
     for (const n of best) for (let i = 0; i < n.mask.length; i += 3) if (n.mask[i]) { rs.push(rgba[i * 4]); gs.push(rgba[i * 4 + 1]); bs.push(rgba[i * 4 + 2]); }
     const med = (a: number[]): number => a.sort((x, y) => x - y)[a.length >> 1] / 255;
@@ -2755,14 +2816,37 @@ async function findRefNails(): Promise<void> {
 /** 내 손톱: 손 점이 잡히면 손톱 자리를 자동으로, 아니면 눌러 달라고 안내 */
 let nailsEnsuring: Promise<void> | null = null;
 let nailNoArtNoted: ImageBitmap | null = null;
+let nailsEnsuringFor: ImageBitmap | null = null;
 function ensureNails(): Promise<void> {
-  nailsEnsuring ??= ensureNailsOnce().finally(() => (nailsEnsuring = null));
+  // 내 사진을 바꿨으면 앞 사진 것을 기다리지 않고 새로(전에는 앞 사진의 찾기를 그대로 돌려줬다)
+  if (!nailsEnsuring || nailsEnsuringFor !== photoOriginal) {
+    nailsEnsuringFor = photoOriginal;
+    const p: Promise<void> = ensureNailsOnce().finally(() => {
+      if (nailsEnsuring === p) nailsEnsuring = null;
+    });
+    nailsEnsuring = p;
+  }
   return nailsEnsuring;
+}
+/** 다른 사진에서 찾은 손톱(크기가 지금 사진과 다른 마스크)을 뺀다: 손톱을 찾는 중에 내 사진을 바꾸면 앞 사진 손톱이 새 사진에 칠해졌다 */
+function pruneStaleNails(): void {
+  if (!photoOriginal || !myNails.length) return;
+  const n = engine.source.width * engine.source.height;
+  if (myNails.some((m) => m.mask.length !== n)) myNails = myNails.filter((m) => m.mask.length === n);
 }
 async function ensureNailsOnce(): Promise<void> {
   if (!PHOTO_MODE || !photoOriginal || swapMode) return;
+  const orig = photoOriginal;
+  const mine = myNails;
+  /** 기다리는 사이 내 사진이 바뀌었으면 그만둔다 */
+  const gone = (): boolean => {
+    if (photoOriginal === orig && myNails === mine) return false;
+    pruneStaleNails();
+    return true;
+  };
   if (!refNailsBusy) refNailsBusy = findRefNails().finally(() => (refNailsBusy = null));
   await refNailsBusy;
+  if (gone()) return;
   if (!refNailArt()) {
     if (lastSource && nailNoArtNoted !== lastSource) {
       nailNoArtNoted = lastSource;
@@ -2782,6 +2866,7 @@ async function ensureNailsOnce(): Promise<void> {
     while (!engine.lastHands.length && performance.now() - th0 < 2000) await new Promise((r) => setTimeout(r, 100));
     handsMine = engine.lastHands;
   }
+  if (gone()) return;
   // 사진은 거울상이 아니라 왼손·오른손 판단이 뒤바뀌기도 한다: 손등 방향 두 가지 중 손톱이 더 잘 보이는 쪽
   const quads = handsMine.flatMap(bestQuads).filter((q) => q.vis > 0.3);
   nailExpect = quads.length;
@@ -2794,6 +2879,7 @@ async function ensureNailsOnce(): Promise<void> {
       console.warn('손톱 모델', e);
       return [];
     });
+    if (gone()) return;
     for (const n of bySeg) {
       const q = bestQuads(handsMine[n.hand]).find((x) => x.finger === n.finger);
       if (!q || q.vis <= 0.3) continue;
@@ -2808,6 +2894,7 @@ async function ensureNailsOnce(): Promise<void> {
     console.debug('[nail] seg', bySeg.length, '→', myNails.length);
     // 모델이 못 찾은 손가락만 SAM 으로
     const sam = done.size < quads.length ? await mySamImage() : null;
+    if (gone()) return;
     // 손 점으로 정한 손톱 크기(길이·폭)를 넘는 덩어리(손가락·손 전체가 잡힌 것)는 버린다
     // 손톱 크기 기준: 손가락 끝마디로 잰 값은 가까이 찍은 손에서 실제보다 훨씬 작게 나와, 손 크기(손목→가운데 손가락 뿌리)의 18%와 큰 쪽
     for (const [hi, hp] of handsMine.entries()) {
@@ -2821,6 +2908,7 @@ async function ensureNailsOnce(): Promise<void> {
       for (const q of left) {
         const size = Math.max(q.len, q.width, hs * 0.18);
         await addMyNail(hsam, q.c.x, q.c.y, q.dir, true, { c: q.c, size, maxExt: small ? 2.5 : 5, est: q.len * q.width, retry: small ? undefined : () => tipSamImage(q.c, size * 4) });
+        if (gone()) return;
       }
     }
   }
@@ -2829,6 +2917,7 @@ async function ensureNailsOnce(): Promise<void> {
   // 손 점으로 몇 개만 찾았으면(손가락이 겹쳐 손 점이 어긋남) 찾은 손톱 색과 비슷한 손 둘레 덩어리를 더 찾는다
   // (빨간 매니큐어 손톱 넷 중 둘만 바뀌면 섞여 보여 어색하다)
   if (myNails.length && myNails.length < 10) await moreNailsLikeMine(handsMine);
+  if (gone()) return;
   // 손 점으로 4개 미만이면(가까이 찍은 손·긴 네일은 손 점이 엉뚱한 곳에 몰리기도 한다) 색으로도 찾아 더 많이 찾은 쪽:
   // 매니큐어 바른 손톱은 피부와 색이 뚜렷이 다르다(전에는 하나라도 찾으면 색으로 안 찾아 손톱 하나만 바뀌었다)
   let colorFound = !myNails.length;
@@ -2843,11 +2932,13 @@ async function ensureNailsOnce(): Promise<void> {
       return { x0: Math.min(...xs) - m, y0: Math.min(...ys) - m, x1: Math.max(...xs) + m, y1: Math.max(...ys) + m };
     });
     let found = await nailsByColor(base.rgba, base.w, base.h, () => mySamImage(), '손톱을 찾는 중…', boxes, true);
+    if (gone()) return;
     console.debug('[nail] color(boxes)', found.length, 'byPose', byPose.length);
     // 손 점으로 하나 이하만 찾았으면 손 점 자체가 어긋났을 수 있다: 사진 전체에서도 찾아 더 많이 찾은 쪽
     // (긴 네일 손을 가까이 찍으면 손 찾기가 구석에 작은 손을 잡아, 그 둘레만 세느라 위쪽 손톱 셋을 못 봤다)
     if (byPose.length <= 1 && boxes.length) {
       const all = await nailsByColor(base.rgba, base.w, base.h, () => mySamImage(), '손톱을 찾는 중…', [], true);
+      if (gone()) return;
       console.debug('[nail] color(all)', all.length);
       if (all.length > found.length) {
         found = all;
@@ -2885,6 +2976,7 @@ async function ensureNailsOnce(): Promise<void> {
   if (myNails.length < 3) {
     const base = stillRGBA();
     const grid = await nailsBySamGrid(base.rgba, base.w, base.h, () => mySamImage());
+    if (gone()) return;
     if (grid.length > myNails.length) {
       for (const n of grid) growNailMask(n.mask, base.w, base.h, base.rgba, 2);
       myNails.splice(0, myNails.length, ...grid);
@@ -2894,6 +2986,7 @@ async function ensureNailsOnce(): Promise<void> {
   // 색으로 몇 개만 찾았어도(서로 낀 손) 그 손톱 색으로 나머지를 더 찾는다
   if (colorFound && myNails.length && myNails.length < 10) await moreNailsLikeMine(handsMine);
   await glintsToNails();
+  if (gone()) return;
   dropSkinNails();
   dropOversizeNails();
   setStatus(myNails.length ? `${myNails.length < nailExpect ? `손톱을 ${myNails.length}개만 찾았어요. ` : ''}빠진 손톱은 눌러서 더하고, 잘못 잡힌 곳은 다시 누르면 빠져요` : '손톱을 하나씩 눌러 주세요(누른 손톱에 고른 사진의 네일이 입혀져요)');
@@ -3164,13 +3257,18 @@ viewEl.addEventListener('pointerdown', (ev) => {
   }
   void (async () => {
     setStatus('손톱 오려 내는 중…');
+    const orig = photoOriginal;
     const ok = await addMyNail(await mySamImage(), x, y, null);
+    if (photoOriginal !== orig) return;
     if (ok) {
       nailGen++;
       setStatus('');
       applyAll();
     }
-  })();
+  })().catch((err) => {
+    console.warn('손톱 오려 내기 실패', err);
+    setStatus('손톱을 오려 내지 못했어요(모델을 불러오지 못함). 잠시 뒤 다시 눌러 주세요');
+  });
 });
 
 // 자동 시험용: 사진 모드 손톱 상태
@@ -3821,6 +3919,7 @@ async function applyGenLive(): Promise<void> {
     }
     genEl.hidden = true;
   } catch (err) {
+    if (err instanceof Superseded) return;
     setStatus(`실시간에 입히지 못했어요: ${(err as Error).message}`);
   } finally {
     genLiveEl.disabled = false;
@@ -4159,7 +4258,13 @@ $('ref-crop').addEventListener('click', () => {
         cut.width = Math.max(2, Math.round(r.w * k));
         cut.height = Math.max(2, Math.round(r.h * k));
         cut.getContext('2d')!.drawImage(src, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, cut.width, cut.height);
-        void createImageBitmap(cut).then((bmp) => applyPhoto(bmp, 'auto', undefined, src));
+        void createImageBitmap(cut)
+          .then((bmp) => applyPhoto(bmp, 'auto', undefined, src))
+          .catch((err) => {
+            if (err instanceof Superseded) return;
+            console.error(err);
+            setStatus(unreadablePhotoMsg(err));
+          });
       },
     },
   ]);
@@ -4188,10 +4293,23 @@ async function begin(open: () => Promise<void>): Promise<void> {
     running = true;
     btnSnapEl.hidden = false;
   } catch (err) {
-    const msg = err instanceof DOMException && err.name === 'NotAllowedError' ? '카메라 권한이 거부되었습니다. 브라우저 주소창에서 권한을 허용해 주세요.' : String(err);
-    setStatus(msg);
+    // 열어 둔 카메라는 끈다(모델을 못 받아 실패해도 카메라 불이 켜진 채 남았다)
+    engine.source.close();
+    running = false;
+    console.warn(err);
+    setStatus(startErrorText(err));
     startEl.hidden = false;
   }
+}
+
+function startErrorText(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : '';
+  if (name === 'NotAllowedError') return '카메라 권한이 거부되었습니다. 브라우저 주소창에서 권한을 허용해 주세요.';
+  if (name === 'NotReadableError') return '카메라를 다른 앱이 쓰고 있습니다. 다른 앱을 닫고 다시 시도해 주세요.';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return '쓸 수 있는 카메라를 찾지 못했습니다.';
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/fetch|network|load|404|Failed/i.test(msg)) return '모델을 받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.';
+  return `시작하지 못했습니다: ${msg}`;
 }
 
 /** 앞(셀피)·뒤 카메라 */
@@ -4424,7 +4542,9 @@ function applyParams(): void {
       .then((res) => res.blob())
       .then((b) => createImageBitmap(b))
       .then((bmp) => applyPhoto(bmp, mode))
-      .catch((err) => setStatus(`사진을 열지 못했어요: ${(err as Error).message}`));
+      .catch((err) => {
+        if (!(err instanceof Superseded)) setStatus(`사진을 열지 못했어요: ${(err as Error).message}`);
+      });
   }
 }
 
