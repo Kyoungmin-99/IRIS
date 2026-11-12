@@ -497,7 +497,11 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
     // 한 번 구워져 보였다
     // (분석한 그림 기준 좌표이므로 ✂️ 영역으로 자른 경우에도 그 그림에서 다시 뽑는다)
     if (PHOTO_MODE && r.tattooSrc) {
-      const hi = upscaleInkSource(r.tattooSrc.src, source, 1600);
+      // 도안이 사진에서 작으면(긴 변의 25% 아래) 원본이 허락하는 만큼 더 크게 읽는다(도안 긴 변 400px 쯤, 사진 긴 변 2400 까지):
+      // 1600 에서 뽑으면 작은 도안은 40~80칸뿐이라 가까이 찍은 팔에 옮길 때 크게 늘어나 흐렸다
+      const rc0 = r.tattooSrc.rect, frac = Math.max(rc0.w, rc0.h) / Math.max(r.tattooSrc.src.w, r.tattooSrc.src.h);
+      const hiSide = Math.min(2400, Math.max(1600, Math.round(400 / Math.max(frac, 0.02))));
+      const hi = upscaleInkSource(r.tattooSrc.src, source, hiSide);
       // 타투 잉크 모델(자체 학습): 잉크 확률을 함께 넘겨 밝기 대비 규칙이 놓친 잉크(분할이 옷으로 읽은 맨살 위)를 더하고 주름·그늘을 뺀다.
       // 모델을 못 불러오면 규칙만
       hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, INK_SIDES).catch((err) => {
@@ -2835,6 +2839,29 @@ async function findRefNails(): Promise<void> {
       // 둘레와 색이 거의 같으면 손톱이 아니다(손 점이 엉뚱한 곳에 잡혀 손등·배경 덩어리를 오렸다)
       if (maskContrast(rgba, w, h, r.mask) < 8) continue;
       got.push({ mask: r.mask, frame: f });
+    }
+    // 넷 미만이면 손톱 전용 분할 모델(내 사진 손톱 찾기와 같은 것)로 빠진 손가락을 채운다: 누드·살색 바탕 손톱(프렌치 선·작은 파츠)은
+    // 둘레 살과 색이 같아 위의 색 대비 거르기에 떨어지거나 SAM 이 선만 오려, 손톱 모양을 못 찾고 색만(전에는 선 색으로 통째) 칠해졌다.
+    // 손톱 전체 모양을 찾아야 바탕 + 선 그대로 옮길 수 있다
+    if (got.length < 4) {
+      const bySeg = await nailCropMasks(cv, handsRef).catch((e) => {
+        console.warn('손톱 모델(고른 사진)', e);
+        return [];
+      });
+      if (src !== lastSource) return;
+      let added = 0;
+      for (const n of bySeg) {
+        const q = bestQuads(handsRef[n.hand]).find((x) => x.finger === n.finger);
+        if (!q || q.vis <= 0.3) continue;
+        const a = maskArea(n.mask), est = q.len * q.width;
+        if (a < Math.max(30, est * 0.2) || a > est * 8) continue;
+        if (got.some((g) => overlapFrac(g.mask, n.mask) > 0.3 || overlapFrac(n.mask, g.mask) > 0.3)) continue;
+        const f = nailFrame(n.mask, w, h, n.dir, rgba);
+        if (!f) continue;
+        got.push({ mask: n.mask, frame: f });
+        added++;
+      }
+      if (added) console.log('[nail] 고른 사진 손톱: 손톱 모델로 더함', added, '→', got.length);
     }
     // 몇 개만 찾았으면(손 점이 일부만·엉뚱하게 잡힘) 색 덩어리 방식도 해 보고 더 많이 찾은 쪽을 쓴다
     if (got.length >= 4) {
