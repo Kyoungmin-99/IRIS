@@ -158,6 +158,7 @@ void main() {
 const COMPOSITE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uCam;
+uniform float uHasSeg;
 uniform sampler2D uSeg;
 uniform sampler2D uM1;   // R 립, G 아이섀도, B 블러셔, A 눈썹
 uniform sampler2D uM2;   // R 아이라이너, G 눈(흰자·눈동자), B 펄 반짝이, A 이목구비(피부 보정 제외)
@@ -186,17 +187,20 @@ void main() {
   vec4 m1 = texture(uM1, mUv);
   vec4 m2 = texture(uM2, mUv);
   // 손(몸 피부)이 얼굴 앞에 오면 그 위에는 칠하지 않는다
-  float hand = smoothstep(0.5, 0.8, texture(uSeg, vUv).g);
+  // 분할을 안 쓰면(설정에서 끔·모델을 못 불러옴) 손 가림·얼굴 피부 제한 없이 칠한다: 전에는 설정을 꺼도 가렸고,
+  // 분할이 없으면 얼굴 피부 값이 0 이라 피부 보정·윤곽이 말없이 꺼졌다
+  float hand = uHasSeg > 0.5 ? smoothstep(0.5, 0.8, texture(uSeg, vUv).g) : 0.0;
+  float faceSkin = uHasSeg > 0.5 ? smoothstep(0.3, 0.8, texture(uSeg, vUv).b) : 1.0;
   m1 *= 1.0 - hand;
   m2 *= 1.0 - hand;
   // 눈 안쪽에는 아이섀도·눈썹이 번지지 않게
   float eye = smoothstep(0.35, 0.75, m2.g);
   float shadowM = smoothstep(0.0, 0.85, m1.g) * (1.0 - eye);
   // 피부 보정 범위: 얼굴 피부(분할 B)에서 이목구비를 뺀 곳
-  float baseM = uBaseAmt > 0.0 ? uBaseAmt * smoothstep(0.3, 0.8, texture(uSeg, vUv).b) * (1.0 - hand) * (1.0 - smoothstep(0.1, 0.6, m2.a)) : 0.0;
+  float baseM = uBaseAmt > 0.0 ? uBaseAmt * faceSkin * (1.0 - hand) * (1.0 - smoothstep(0.1, 0.6, m2.a)) : 0.0;
   // 윤곽은 얼굴 피부에만(앞머리·배경 제외)
   vec4 m3raw = texture(uM3, mUv);
-  vec4 m3 = uContourAmt > 0.0 ? m3raw * smoothstep(0.3, 0.8, texture(uSeg, vUv).b) * (1.0 - hand) : vec4(0.0);
+  vec4 m3 = uContourAmt > 0.0 ? m3raw * faceSkin * (1.0 - hand) : vec4(0.0);
   float a = max(max(max(m1.r * uLipAmt, shadowM * uShadowAmt), max(m1.b * uBlushAmt, m1.a * uBrowAmt)), max(max(m2.r * uLinerAmt, baseM), max(m3.r, m3.g) * uContourAmt));
   if (a < 0.002) discard;
 
@@ -297,7 +301,7 @@ export class MakeupRenderer {
     this.blur = this.program(FULL_VS, BLUR_FS, ['uTex', 'uDir', 'uSigma', 'uWide', 'uSize']);
     this.comp = this.program(COMPOSITE_VS, COMPOSITE_FS, [
       'uCam', 'uSeg', 'uM1', 'uM2', 'uLip', 'uLipAmt', 'uGloss', 'uShadow', 'uShadowAmt', 'uPearl', 'uBlush', 'uBlushAmt', 'uLiner', 'uLinerAmt', 'uBrow', 'uBrowAmt',
-      'uSkinPts', 'uLipPts', 'uSkinLod', 'uLipLod', 'uCamBlur', 'uBase', 'uBaseAmt', 'uM3', 'uContour', 'uContourAmt', 'uShadowOut', 'uShadowTwo',
+      'uSkinPts', 'uLipPts', 'uSkinLod', 'uLipLod', 'uCamBlur', 'uBase', 'uBaseAmt', 'uM3', 'uContour', 'uContourAmt', 'uShadowOut', 'uShadowTwo', 'uHasSeg',
     ]);
     this.camBlur = this.program(FULL_VS, CAMBLUR_FS, ['uSrc', 'uDir', 'uSigma', 'uFromCam', 'uSize']);
     this.vao = gl.createVertexArray()!;
@@ -370,7 +374,7 @@ export class MakeupRenderer {
    * 카메라를 그린 화면 위에 메이크업을 덧그린다.
    * @param size 영상 크기(px). regions 좌표와 같은 기준
    */
-  draw(regions: FaceRegions, look: MakeupLook, cam: WebGLTexture, seg: WebGLTexture, size: { width: number; height: number }, alpha = 1): void {
+  draw(regions: FaceRegions, look: MakeupLook, cam: WebGLTexture, seg: WebGLTexture, size: { width: number; height: number }, alpha = 1, hasSeg = true): void {
     const gl = this.gl;
     const { width: W, height: H } = size;
     this.resize(W, H);
@@ -436,6 +440,7 @@ export class MakeupRenderer {
     };
     bind(0, cam, 'uCam');
     bind(1, seg, 'uSeg');
+    gl.uniform1f(this.comp.u.uHasSeg, hasSeg ? 1 : 0);
     bind(2, this.tex[4], 'uM1');
     bind(3, this.tex[5], 'uM2');
     bind(4, this.tex[7], 'uCamBlur');

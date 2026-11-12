@@ -150,10 +150,15 @@ void main() {
   float dl = dot(dyed, W);
   dyed = mix(dyed, vec3(dl), smoothstep(1.15, 2.2, shade) * 0.6 * keep);
   dyed = mix(dyed, c * (dot(target, W) / max(mean, 0.03)), (1.0 - smoothstep(0.45, 0.9, shade)) * 0.35 * keep);
+  // 선명한 색(keep 낮음)은 넘친 채널만 자르지 않고 색을 지킨 채 줄인다: 빨강을 2배 밝히면 R 만 1 에서 잘리고 G·B 는 계속 올라
+  // 금발의 밝은 결이 분홍으로 떴다. 채도 낮은 색(keep 1)은 전과 같다
+  float vivid = (1.0 - keep) / 0.7;
+  dyed = mix(dyed, dyed / max(1.0, max(max(dyed.r, dyed.g), dyed.b)), vivid);
   dyed = clamp(dyed, 0.0, 1.0);
-  // 윤기(주변보다 밝은 결)는 흰 빛으로 조금 더해 광택을 유지(경계는 제외)
+  // 윤기(주변보다 밝은 결)는 흰 빛으로 조금 더해 광택을 유지(경계는 제외). 선명한 색은 윤기도 그 색 쪽으로(흰 윤기가 빨강을 분홍으로 만든다)
   float Lblur = dot(textureLod(uCam, vUv, 3.0).rgb, W);
-  dyed += vec3(max(0.0, L - Lblur) * 0.5 * edge);
+  vec3 glossC = mix(vec3(1.0), target / max(max(max(target.r, target.g), target.b), 0.02), 0.7 * vivid);
+  dyed += glossC * (max(0.0, L - Lblur) * 0.5 * edge);
   vec3 inner = mix(c, clamp(dyed, 0.0, 1.0), m);
   // 경계: 픽셀은 머리카락과 배경이 섞인 값이라, 통째로 섞으면 원래 머리색이 테두리로 남는다(밝게 염색할 때 어두운 테두리).
   // 확률을 섞인 비율로 보고, 주변 머리카락의 평균색을 빼고 그 염색색을 더한다(배경 몫은 그대로).
