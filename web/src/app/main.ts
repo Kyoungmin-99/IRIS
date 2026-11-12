@@ -2890,11 +2890,7 @@ async function findRefNails(): Promise<void> {
     // 단, 셋 넘게 찾았고 색이 뚜렷하면(채도 15 넘게) 그늘·흰 털옷(채도 낮음)이 아니다: 올리브 손톱(채도 30)이 AI 이름 '민트·그린'의
     // 민트색과 달라 버려지고 민트 가상 손톱이 칠해졌다
     const vivid = best.length >= 3 && Math.hypot(lab[1], lab[2]) >= 15;
-    // 프렌치·선 디자인은 AI 색 이름이 바탕이 아니라 끝·선 색이다(살색 바탕에 검은 선 → '블랙'): 제대로 찾은 살색 손톱 둘을
-    // '색이 다르다'며 버리고 손톱 전체를 검정 단색으로 칠했다(실제 사진으로 확인) → 프렌치면 이름 색과 견주지 않는다
-    const st = lastStyle as { nail?: { style?: string }; ai?: { hints?: { nail?: { style?: string } } } } | null;
-    const tipLabel = st?.ai?.hints?.nail?.style === 'french' || st?.nail?.style === 'french';
-    if (!vivid && !tipLabel && (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60)) {
+    if (!vivid && (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60)) {
       refNails = { src, rgba, w, h, nails: [] };
       return;
     }
