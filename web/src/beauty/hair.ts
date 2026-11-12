@@ -159,8 +159,12 @@ void main() {
   // 확률을 섞인 비율로 보고, 주변 머리카락의 평균색을 빼고 그 염색색을 더한다(배경 몫은 그대로).
   vec4 hc = textureLod(uStatsC, vec2(vUv.x, 1.0 - vUv.y), 2.0);
   vec3 Hloc = hc.a > 1e-3 ? hc.rgb / hc.a : vec3(mean);
-  float shadeH = clamp(pow((dot(Hloc, W) + e) / (mean + e), 0.35), 0.7, 1.4);
-  vec3 outer = c + (target * shadeH - Hloc) * mo;
+  // 대부분 머리카락이고 둘레도 머리카락이면(금발 속 밝은 올: 확률 0.7) 배경이 섞인 게 아니라 그 픽셀이 곧 머리색이다:
+  // 둘레 평균을 빼면 '밝은 올 − 노란 평균'(흰빛·푸른 쪽)이 남아 진한 빨강 염색이 자줏빛이 됐다 → 그만큼 제 색을 뺀다
+  float own = smoothstep(0.45, 0.85, p) * smoothstep(0.4, 0.8, hc.a);
+  vec3 Hpix = mix(Hloc, c, own);
+  float shadeH = clamp(pow((dot(Hpix, W) + e) / (mean + e), 0.35), 0.7, 1.4);
+  vec3 outer = c + (target * shadeH - Hpix) * mo;
   o = vec4(mix(clamp(outer, 0.0, 1.0), inner, edge), 1.0);
 }`;
 

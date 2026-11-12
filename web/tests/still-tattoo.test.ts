@@ -2,7 +2,7 @@
 // 사진 모드 팔 타투 옮기기 단위 테스트
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { closeStrip, armStrip, inkMip, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, type Arm, type InkMap } from '../src/beauty/still-tattoo.ts';
+import { closeStrip, armStrip, inkMip, maskOutLimbs, measureHalfWidth, stripPoint, transferArmInk, transferTorsoInk, type Arm, type InkMap } from '../src/beauty/still-tattoo.ts';
 
 test('팔 반폭 재기: 폭 20 인 세로 띠 → 10 근처', () => {
   const W = 100, H = 100, skin = new Float32Array(W * H);
@@ -186,4 +186,15 @@ test('팔 잉크 옮기기: 축 두 점이 같고 반폭이 0 이어도 사진�
   let black = 0;
   for (let i = 0; i < W * H; i++) if (out[i * 4] < 5 && out[i * 4 + 1] < 5 && out[i * 4 + 2] < 5) black++;
   assert.equal(black, 0);
+});
+
+test('transferTorsoInk: 크게 줄여 놓는 납작한 도안(64×8)도 NaN·검은 점 없이', () => {
+  const thin: InkMap = { rgba: new Uint8ClampedArray(64 * 8 * 4).fill(255), w: 64, h: 8, rect: { x: 0, y: 0, w: 64, h: 8 } };
+  const dst = new Uint8ClampedArray(64 * 64 * 4).fill(200), skin = new Float32Array(64 * 64).fill(1);
+  const st = { ink: 0, kept: 0 };
+  // 내 사진 1px = 도안 16칸(전에는 미리 줄인 맵이 8×1 이 돼 겹선형 표본이 배열 밖을 읽었다)
+  const out = transferTorsoInk(dst, 64, 64, skin, thin, [16, 0, -480, 0, 16, -500], [1 / 16, 0, 30, 0, 1 / 16, 31.25], 1, st);
+  assert.ok(Number.isFinite(st.ink) && Number.isFinite(st.kept), JSON.stringify(st));
+  // 투과율 1(흰색) 도안이라 어두워지는 픽셀이 없어야 한다
+  for (let i = 0; i < out.length; i += 4) assert.ok(out[i] >= 199, `검은 점 ${i / 4}: ${out[i]}`);
 });

@@ -734,13 +734,14 @@ function measureNail(
     // 또 피부가 거의 없는 사진(바닥에 펼친 티셔츠 사진: 피부 0%)은 손톱 사진이 아니다 → 자동 모드에서는 피부 픽셀이 3% 는 있어야
     const all: RGB[] = [];
     let skinN = 0, allN = 0;
+    const skinSum: RGB = [0, 0, 0];
     const step = Math.max(1, Math.floor(px.w / 120));
     for (let y = 0; y < px.h; y += step)
       for (let x = 0; x < px.w; x += step) {
         const k = (y * px.w + x) * 4;
         const c: RGB = [lin1(px.d[k]), lin1(px.d[k + 1]), lin1(px.d[k + 2])];
         allN++;
-        if (isSkin(c)) { skinN++; continue; }
+        if (isSkin(c)) { skinN++; for (let i = 0; i < 3; i++) skinSum[i] += c[i]; continue; }
         const g = gam(c);
         const mx = Math.max(...g);
         const mn = Math.min(...g);
@@ -758,6 +759,9 @@ function measureNail(
     const pick = dom.find((d) => luma(d.color) > 0.03) ?? dom[0];
     if (!pick || pick.share < 0.15) return null;
     color = pick.color;
+    // 피부 넓이에 비해 아주 적은 색(누드 손톱 위 검은 프렌치 선·작은 파츠)은 바탕색이 아니라 장식이다: 그 색을 손톱 색으로 삼으면
+    // 살색 바탕에 검은 선만 있는 네일이 손톱 전체 검정으로 칠해졌다 → 바탕은 누드(피부색 계열)로
+    if (skinN > allN * 0.1 && pick.share * all.length < skinN * 0.015) color = skinSum.map((v) => v / skinN) as RGB;
     samples = all;
   }
   if (!color) return null;
