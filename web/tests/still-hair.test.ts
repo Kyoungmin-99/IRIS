@@ -730,3 +730,39 @@ test('피부 거르기: 턱 아래 흑발 끝의 따뜻한 갈색 가닥은 그�
   assert.ok(alpha[5 * w + 4] < 0.3, `턱 위 ${alpha[5 * w + 4]}`);
   assert.ok(alpha[27 * w + 4] > 0.75, `턱 아래 ${alpha[27 * w + 4]}`);
 });
+
+test('recolorHair: 진한 빨강(어둡지만 색기 많은) 사진은 흑발로 보지 않아 어두운 올도 빨강이 남는다', () => {
+  const W = 160, H = 160;
+  const rnd = (seed: number) => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
+  const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
+  const blonde = (t: number) => (t < 0.5 ? mix([150, 115, 60], [215, 185, 125], t * 2) : mix([215, 185, 125], [250, 240, 215], (t - 0.5) * 2));
+  const red = (t: number) => (t < 0.5 ? mix([30, 2, 6], [95, 8, 18], t * 2) : mix([95, 8, 18], [160, 30, 42], (t - 0.5) * 2));
+  const make = (colorOf: (t: number) => number[], bg: number[], seed: number) => {
+    const r = rnd(seed), rgba = new Uint8ClampedArray(W * H * 4), alpha = new Float32Array(W * H);
+    const col = new Float32Array(W);
+    for (let x = 0; x < W; x++) col[x] = r();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, a = Math.max(0, Math.min(1, (60 - Math.hypot(x - 80, y - 80)) / 6 + 0.5));
+      alpha[i] = a;
+      const t = Math.max(0, Math.min(1, 0.5 + 0.35 * Math.sin(x * 0.9 + col[x] * 3) + 0.25 * (r() - 0.5) + 0.2 * Math.sin(y * 0.05)));
+      const c = colorOf(t);
+      for (let k = 0; k < 3; k++) rgba[i * 4 + k] = c[k] * a + bg[k] * (1 - a);
+      rgba[i * 4 + 3] = 255;
+    }
+    return { rgba, alpha };
+  };
+  const ref = make(red, [200, 200, 205], 3), me = make(blonde, [245, 245, 245], 1);
+  const out = recolorHair(me.rgba, W, H, me.alpha, hairDist(me.rgba, me.alpha)!, hairDist(ref.rgba, ref.alpha, 0.7, 200)!, 1);
+  // 속(알파 1) 픽셀 중 어두운 쪽 20% 의 평균 채도: 흑발 처리(어두울수록 색 빼기)가 걸리면 10 아래로 떨어졌다
+  const lab = new Float32Array(3), v: number[][] = [];
+  for (let i = 0; i < W * H; i++) {
+    if (me.alpha[i] < 0.999) continue;
+    rgb2lab(out[i * 4], out[i * 4 + 1], out[i * 4 + 2], lab);
+    v.push([lab[0], Math.hypot(lab[1], lab[2]), lab[1]]);
+  }
+  v.sort((a, b) => a[0] - b[0]);
+  const lo = v.slice(0, Math.floor(v.length * 0.2));
+  const meanC = lo.reduce((s, x) => s + x[1], 0) / lo.length, meanA = lo.reduce((s, x) => s + x[2], 0) / lo.length;
+  assert.ok(meanC > 15, `어두운 올 채도 ${meanC.toFixed(1)}`);
+  assert.ok(meanA > 10, `어두운 올 붉은기(a) ${meanA.toFixed(1)}`);
+});

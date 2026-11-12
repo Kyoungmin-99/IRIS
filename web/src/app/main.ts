@@ -453,7 +453,9 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   amountEl.value = '1';
   const m = r.makeup;
   // 립 색만 읽은 입술 사진은 얼굴이 없어 사진 화장 옮기기를 못 한다: 고른 립 색으로 칠한다
-  if (m && lastSource) mkSource = m.debug.lipOnly ? null : lastSource;
+  // 화장을 옮길 사진은 실제로 읽은 그림(✂️ 영역으로 잘랐으면 자른 그림): 전체 사진을 쓰면 여러 명 사진에서 작은 얼굴을 골라도
+  // 옮길 때는 다시 가장 큰 얼굴을 잡아, 칩·색은 고른 사람인데 화장은 다른 사람 것이 입혀졌다
+  if (m && source instanceof ImageBitmap) mkSource = m.debug.lipOnly ? null : source;
   if (m) {
     // 사진의 메이크업으로 바꾼다(사진에 없는 부위는 지움). 피부 보정은 사진이 보정된 경우가 많아 약하게 켠다
     for (const part of ['lip', 'blush', 'shadow', 'liner', 'brow', 'contour'] as const) {
@@ -568,13 +570,19 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
   if (r.makeup && r.measure && !off.has('lip')) {
     // 영상이 아직 시작 전이면(사진 분석이 먼저 끝난 경우) 잠시 기다린다
     for (let i = 0; i < 100 && !running; i++) await new Promise((res) => setTimeout(res, 100));
-    if (running) await feedback(r.measure);
+    // 기다리는 사이 다른 사진을 골랐으면 앞 사진 측정값으로 새 사진 설정을 고치지 않는다
+    if (running && seq === photoSeq) await feedback(r.measure);
   }
   return r;
 }
 
 /** 사진 되먹임을 한 번 돌린다(실패해도 앱은 계속) */
-async function feedback(measure: FaceMeasure): Promise<void> {
+let matching: Promise<void> | null = null;
+function feedback(measure: FaceMeasure): Promise<void> {
+  // 한 번에 하나: 칩을 연달아 누르면 두 되먹임이 같은 프레임을 재서 같은 보정을 두 번 곱했다(립이 한 번에 2.4제곱)
+  return (matching ??= feedbackOnce(measure).finally(() => { matching = null; }));
+}
+async function feedbackOnce(measure: FaceMeasure): Promise<void> {
   try {
     await matchToPhoto(measure);
   } catch (err) {
@@ -1249,6 +1257,13 @@ async function myCloseArm(): Promise<{ st: Strip; arm: Arm; skin: Float32Array }
   if (!a || !b || !c) return null;
   return { st, arm: { s: a, e: b, w: c, rUp: st.mean, rLo: st.mean }, skin: ms };
 }
+/** 도안 1칸이 내 사진에서 TAT_MAX_MAG px 을 넘게 커지지 않게 줄인다(cells = 도안의 세로 h 방향 칸 수).
+ * 크기 말(미니·스몰…)로만 정한 크기는 도안 해상도를 모른다: 고른 사진에서 40칸짜리 작은 도안이 가까이 찍은 팔에 13~20배로 커져 흐렸다 */
+const TAT_MAX_MAG = 4;
+function capTatMag(w: number, h: number, cells: number): { w: number; h: number } {
+  const maxH = cells * TAT_MAX_MAG;
+  return h > maxH ? { w: (w * maxH) / h, h: maxH } : { w, h };
+}
 /** 팔 클로즈업 내 사진에 도안(캔버스)을 팔 가운데에 놓는다(크기는 📏 크기: 보이는 팔 길이의 25~85%) */
 async function closeArmPlacePlan(c: HTMLCanvasElement, aspect0: number): Promise<TatPlan | null> {
   const my = await myCloseArm();
@@ -1259,6 +1274,7 @@ async function closeArmPlacePlan(c: HTMLCanvasElement, aspect0: number): Promise
   const maxW = Math.PI * r * 0.9;
   let h = len * (0.25 + 0.6 * tattoo.size), w = h * aspect;
   if (w > maxW) { h *= maxW / w; w = maxW; }
+  ({ w, h } = capTatMag(w, h, rotate ? c.width : c.height));
   const lc = len * Math.min(0.92, Math.max(0.08, tattoo.along ?? 0.5));
   const th0 = Math.asin(Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)));
   const R = 1.25;
@@ -1408,6 +1424,7 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
   const aspect = rotate ? 1 / d.aspect : d.aspect;
   let h = h0, w = h * aspect;
   if (w > maxW) { h *= maxW / w; w = maxW; }
+  if (!tattoo.wrap) ({ w, h } = capTatMag(w, h, rotate ? d.canvas.width : d.canvas.height));
   const lc = segStart + segLen * Math.min(0.92, Math.max(0.08, tattoo.along ?? 0.5));
   // 자리를 손으로 옮기지 않았으면, 도안 높이에서 팔을 가로로 훑어 보이는 피부의 가운데로: 조끼·소매가 위팔 한쪽을 덮으면
   // 관절선 가운데에 놓인 도안 한쪽이 옷 가장자리에 가렸다(위팔로 옮긴 손목 무한대의 왼쪽 고리)
@@ -1432,7 +1449,9 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
     // 보이는 곳이 85% 아래로 치우쳤을 때만(팔 양쪽이 다 보이면 그대로 가운데)
     if (seen > all * 0.2 && seen < all * 0.85) acrossAuto = Math.max(-0.7, Math.min(0.7, sum / seen / 1.25));
   }
-  const th0 = Math.asin(Math.min(0.95, Math.max(-0.95, tattoo.across ?? acrossAuto)));
+  // 손으로 고른 자리(placeFromPoint 의 across)는 실시간 격자 기준(가운데 = 축 − n·반폭·across)이고 여기 옆 좌표 sg 는 +n 쪽·반지름 1.25배라
+  // 부호와 배율을 맞춘다: 그대로 쓰면 누른 곳의 축 반대편에 1.25배 멀리 구워졌다. acrossAuto 는 이미 sg 기준
+  const th0 = tattoo.across !== undefined ? -Math.asin(Math.min(0.95, Math.max(-0.95, tattoo.across)) / 1.25) : Math.asin(acrossAuto);
   const c = d.canvas;
   const rgba = c.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, c.width, c.height).data;
   const ink: InkMap = { rgba, w: c.width, h: c.height, rect: { x: 0, y: 0, w: c.width, h: c.height } };
@@ -1470,11 +1489,14 @@ async function chestPlacePlan(c: HTMLCanvasElement, aspect0: number): Promise<Ta
   const segStart = sw * 0.05, segLen = sw * 0.45, limbW = sw * 0.72;
   let h = segLen * (0.25 + 0.6 * tattoo.size), w = h * aspect0;
   if (w > limbW) { h *= limbW / w; w = limbW; }
-  const oc = Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)) * (limbW / 2);
+  // 손으로 고른 자리는 실시간 격자(tattooMesh 가슴: 어깨 폭 5~30% 아래, 옆 반폭 어깨 폭의 20%, 가운데 − n·옆)와 같은 곳에:
+  // 전에는 옆이 반대 부호·1.8배, 세로도 다른 길이라 누른 곳의 반대편 가슴에 구워졌다
+  const oc = -Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)) * sw * 0.2;
+  const picked = tattoo.along != null;
   const sx = c.width / w, sy = c.height / h;
   // 세로 자리 along 에 놓았을 때의 변환과 도안 자리의 내 피부 비율(10×10 격자)
   const planAt = (along: number) => {
-    const lc = segStart + segLen * Math.min(0.92, Math.max(0.08, along));
+    const lc = segStart + (picked ? sw * 0.25 : segLen) * Math.min(0.92, Math.max(0.08, along));
     const center = { x: mid.x + down.x * lc + right.x * oc, y: mid.y + down.y * lc + right.y * oc };
     // 내 사진 px → 도안 px: u = 0.5 + ((p − 가운데)·right)/w, v = 0.5 + ((p − 가운데)·down)/h
     const toRef = [right.x * sx, right.y * sx, c.width * 0.5 - (center.x * right.x + center.y * right.y) * sx, down.x * sy, down.y * sy, c.height * 0.5 - (center.x * down.x + center.y * down.y) * sy];
@@ -2081,6 +2103,9 @@ async function updateStillHairOnce(): Promise<void> {
       if (amount > 0) {
         const mine = await mineHairMatte();
         const ref = await refHairDist();
+        // 기다리는 사이 내 사진이 바뀌었으면 그만: 그대로 가면 mine 이 null 이라 아래 실시간 염색 분기가 켜지고,
+        // 새 사진을 구운 그림 위에 실시간 염색이 한 번 더 덧입혀졌다
+        if (stale()) return;
         // 내 머리카락이 새까맣게 찍혀 결이 없으면(밝기 상위 10% 가 L 14 아래: sam1 어두운 사진 9.9, 아프로 00035 는 28) 밝은 염색(고른 사진
         // 가운데 L 35 넘음)은 결 없는 하얀 석고 덩어리가 된다(배경과 머리를 가를 근거도 없음) → 하지 않고 이유를 알린다
         const nQ = mine ? mine.dist.L.length - 1 : 0;
@@ -2105,6 +2130,7 @@ async function updateStillHairOnce(): Promise<void> {
           engine.hair = { color: h.color!, amount: amt(h.amount), tip: hairTip ?? undefined };
           setStatus(mine ? '고른 사진에서 머리카락을 찾지 못해 머리색만 옮겼어요' : '');
         } else {
+          engine.hair = null;
           setStatus('머리카락 색을 올마다 옮기는 중…');
           // 투톤·옴브레 사진이면 뿌리→끝 띠마다 옮긴다
           const rb = refHair?.bands;
@@ -2231,13 +2257,15 @@ function rankNails(rgba: Uint8ClampedArray, w: number, h: number, nails: { mask:
     const sharp = cnt ? s2 / cnt - (s / cnt) ** 2 : 0;
     return { n, sharp, dark: all ? dark / all : 1 };
   });
-  const best = Math.max(...q.map((v) => v.sharp));
   // 손톱의 일부만 잡힌 조각(반사 줄무늬만 있는 작은 조각)은 결이 가장 또렷해 맨 앞에 서서 줄무늬 손톱으로 칠해졌다:
   // 손톱 넓이 가운데 값의 35% 아래는 뺀다(셋 넘게 남을 때)
   const area = (n: { mask: Uint8Array }) => n.mask.reduce((t, v) => t + v, 0);
   const areas = nails.map(area).sort((a, b) => a - b), medA = areas[areas.length >> 1];
   const whole = q.filter((v) => area(v.n) >= medA * 0.35);
   if (whole.length >= 3 && whole.length < q.length) q.splice(0, q.length, ...whole);
+  // 또렷함 기준은 조각을 뺀 뒤에 잰다: 먼저 재면 가장 또렷한 조각이 기준이 돼 온전한 손톱이 모두 '흐림'으로 떨어지고
+  // (둘 미만이라) 흐린 손톱 거르기가 통째로 꺼졌다
+  const best = Math.max(...q.map((v) => v.sharp));
   const good = q.filter((v) => v.sharp >= best * 0.3 && v.dark <= 0.08);
   const use = good.length >= 2 ? good : q;
   use.sort((a, b) => b.sharp - a.sharp);
@@ -2248,7 +2276,9 @@ function refNailArt(): NailArt | null {
   if (refNails && refNails.src === lastSource && refNails.nails.length) return refNails;
   // 손톱 모양을 못 찾았으면(색만 앎) 그 색의 가상 손톱 그림으로 굽는다: 실시간 네일은 정지 사진에서 어긋나 보인다
   let c = chosen.nail.color;
-  if (!c || !lastSource || (refNailsBusy && !refNails)) return null;
+  // 고른 사진의 손톱을 아직 찾는 중이면 기다린다(앞 사진의 손톱이 남아 있어도): 전에는 두 번째로 고른 사진이 색만 입힌 가상 손톱으로
+  // 구워지고, 찾기가 끝나도 다시 굽지 않아 무늬가 끝내 안 나왔다
+  if (!c || !lastSource || (refNailsBusy && refNails?.src !== lastSource)) return null;
   // 손톱을 못 찾은 사진의 잰 색은 손 점이 못 잡혀 배경·옷을 잰 경우가 많다(검은 가죽 위 누드 손톱이 회색, 니트 소매 위 베이지
   // 손톱이 짙은 갈색, 흰 바탕의 분홍 손톱이 회색). AI 가 읽은 색 이름과 색도 12 넘게·밝기 20 넘게 다르면 이름 색으로(고른 색도 바꿈:
   // 굽기 열쇠에 네일 색이 들어 있어 이름이 늦게 와도 다시 굽는다)
@@ -2846,9 +2876,14 @@ async function ensureNailsOnce(): Promise<void> {
     pruneStaleNails();
     return true;
   };
-  if (!refNailsBusy) refNailsBusy = findRefNails().finally(() => (refNailsBusy = null));
-  await refNailsBusy;
-  if (gone()) return;
+  const hadRef = !!lastSource && refNails?.src === lastSource;
+  // 찾는 사이 고른 사진이 또 바뀌었으면 새 사진으로 한 번 더(세 번까지)
+  for (let k = 0; k < 3; k++) {
+    if (!refNailsBusy) refNailsBusy = findRefNails().finally(() => (refNailsBusy = null));
+    await refNailsBusy;
+    if (gone()) return;
+    if (!lastSource || refNails?.src === lastSource) break;
+  }
   if (!refNailArt()) {
     if (lastSource && nailNoArtNoted !== lastSource) {
       nailNoArtNoted = lastSource;
@@ -2856,7 +2891,11 @@ async function ensureNailsOnce(): Promise<void> {
     }
     return;
   }
-  if (nailsAuto === photoOriginal) return;
+  if (nailsAuto === photoOriginal) {
+    // 내 손톱은 이미 찾아 둔 사진: 고른 사진의 손톱을 방금 새로 찾았으면 그 무늬로 다시 굽는다
+    if (!hadRef) { nailGen++; applyAll(); }
+    return;
+  }
   nailsAuto = photoOriginal;
   // 사진용 손 찾기(정지 사진 모드, 크기·여백 바꿔 여러 번)를 먼저: 실시간 추적은 영상용이라 사진에서도 실행 때마다
   // 손 점이 조금씩 달라(긴 네일 손은 한곳에 몰리기도) 찾는 손톱 수가 2~4개로 들쭉날쭉했다.
@@ -3515,6 +3554,7 @@ async function openMyPhoto(f: File): Promise<void> {
   $<HTMLInputElement>('opt-mirror').checked = false;
   applyView();
   engine.tracker.setStill(null);
+  mineHairNote = '';
   photoOriginal = bmp;
   swapMode = false;
   btnSwapEl.textContent = '🔁 사진 속에 내 얼굴';
@@ -4034,6 +4074,8 @@ async function matchToPhoto(photo: FaceMeasure): Promise<void> {
   for (let it = 0; it < 4; it++) {
     const cap = await engine.captureNext();
     if (!cap.face) break;
+    // 도는 사이 다른 사진을 골랐으면 그만(앞 사진 값으로 새 사진의 색을 지우거나 바꾸지 않게)
+    if (lastStyle?.measure !== photo) return;
     const now = measureFace(cap.image, cap.face.p);
     const log: Record<string, unknown> = { it };
     if (chosen.blush.color && spot(photo) && spot(now) && spot(my)) {
@@ -4054,8 +4096,10 @@ async function matchToPhoto(photo: FaceMeasure): Promise<void> {
       log.shadow = { wantIn: photo.shadowIn, gotIn: now.shadowIn, wantOut: photo.shadowOut, gotOut: now.shadowOut, amount: chosen.shadow.amount, color: chosen.shadow.color, colorOut: shadowOut };
     } else if (chosen.shadow.color && darker(photo) && darker(now) && darker(my)) {
       const m = matchTint({ color: chosen.shadow.color, amount: chosen.shadow.amount }, darker(photo)!, darker(now)!, NATURAL_SHADOW, darker(my)!);
-      chosen.shadow.color = m.amount > 0 ? m.color : null;
-      chosen.shadow.amount = m.amount > 0 ? m.amount : 0.45;
+      // 색조는 맨 눈두덩과 같고 어둡기만 한 섀도(흔한 갈색 음영)는 색 편차가 없어 '화장 없음'으로 나온다 → 어두우면 지우지 않고 그대로 둔다
+      const darkWant = luma(darker(photo)!) < luma(NATURAL_SHADOW) * 0.85;
+      if (m.amount > 0) { chosen.shadow.color = m.color; chosen.shadow.amount = m.amount; }
+      else if (!darkWant) { chosen.shadow.color = null; chosen.shadow.amount = 0.45; }
       log.shadow = { want: darker(photo), got: darker(now), my: darker(my), natural: NATURAL_SHADOW, amount: m.amount, color: chosen.shadow.color };
     }
     if (chosen.lip.color && photo.lip && now.lip) {
@@ -4246,7 +4290,8 @@ $('ref-crop').addEventListener('click', () => {
   const src = lastSource;
   const st = lastStyle;
   if (!src || !st) return;
-  const t = st.thumb;
+  // 영역은 늘 원본 전체에서 고른다: 한 번 자른 뒤에는 st.thumb 이 자른 그림이라, 그 좌표를 원본에 대면 엉뚱한 곳이 잘렸다
+  const t = toCanvas(src, 768);
   openCrop(t, t.width, t.height, null, st.faces && st.faces > 1 ? `얼굴이 ${st.faces}명이에요. 원하는 사람을 드래그해서 감싸 주세요` : '원하는 사람이나 부분을 드래그해서 감싸 주세요', [
     { label: '취소', cls: 'ghost', run: () => undefined },
     {

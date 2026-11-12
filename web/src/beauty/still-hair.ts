@@ -245,7 +245,10 @@ export function recolorHair(
   // 가는 올 무늬는 크게 밝힐 때(올 결 되살리기)뿐 아니라 리본을 쓸 때도 필요: 갈색→잿빛처럼 밝기 변화가 없는 염색(lift 0)에서는
   // 올 무늬가 없어 리본이 통째로 밝아진 평평한 판(폭 7px, 순위 0.45 → 0.9)이 정수리에 물감 자국처럼 남았음
   const strands = lift > 0.05 || (hl > 0.05) ? strandTexture(luma, w, h, alpha, seed) : null;
-  const blackRef = Math.max(0, Math.min(1, (28 - ref.L[Q / 2]) / 6));
+  // 흑발 판정은 어둡고 색기도 적을 때만: 밝기만 보면 진한 빨강·버건디·남색(가운데 L 18, 채도 40)도 흑발로 읽혀
+  // 아래 kd 가 어두운 픽셀의 색을 빼 버렸다(채도 19 → 4)
+  const refC = Math.hypot(ref.a[Q / 2], ref.b[Q / 2]);
+  const blackRef = Math.max(0, Math.min(1, (28 - ref.L[Q / 2]) / 6)) * Math.max(0, Math.min(1, 1 - (refC - 10) / 10));
   // ① 픽셀마다 순위(0~1)
   const U = new Float32Array(w * h).fill(-1);
   // 리본이 민 몫(0~1): 크게 밝힐 때(아래 relight)는 순위 대신 이 몫으로 밝기 수준만 가닥 따라 올린다
@@ -442,7 +445,9 @@ export function recolorHair(
     const a0 = luma[i] < 24 && aBlur[i] > 0.85 ? Math.max(alpha[i], aBlur[i]) : alpha[i];
     // 크게 밝힐 때 가르마 두피처럼 내 머리보다 훨씬 밝은 곳은 가장 밝은 머리색으로 바뀌어 하얀 솜털 얼룩이 된다 → 덜 물들인다
     // 배경이 섞인 가장자리(ew)는 밝은 게 배경 몫이라 덜 물들이지 않는다(아래에서 머리 몫만 바꾸고 새 색 안으로 묶는다)
-    const ew = cWb[i] >= 0.02 || gC ? Math.max(0, Math.min(1, (1 - a0) / 0.5)) : 0;
+    // 머리카락에 둘러싸인 곳(aBlur 0.9 넘음)은 알파가 낮아도 배경이 섞인 게 아니다: 금발의 밝은 올(알파 0.6~0.8)을 가장자리로 보면
+    // '픽셀 − 둘레 평균 머리색'(흰빛·푸른 쪽) 이 그대로 남아 진한 빨강 염색이 자줏빛이 됐다
+    const ew = (cWb[i] >= 0.02 || gC ? Math.max(0, Math.min(1, (1 - a0) / 0.5)) : 0) * (1 - Math.max(0, Math.min(1, (aBlur[i] - 0.6) / 0.3)));
     const al = a0 * amt * (1 - 0.8 * over[i] * (1 - ew));
     if (al < 0.004 || U[i] < 0) continue;
     const o = i * 4;

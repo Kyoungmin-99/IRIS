@@ -540,8 +540,10 @@ export function transferMakeup(
     Vb[i] = v;
   }
   if (dbg) {
-    const at0 = () => { const i = Math.round(dp[205].y) * w + Math.round(dp[205].x); return [+myBase[0][i].toFixed(1), +rfBase[0][i].toFixed(1)]; };
-    const at = (k: number) => { const p = dp[k]; const i = Math.round(p.y) * w + Math.round(p.x); return { V: +V[i].toFixed(2), Cf: +Cf[i].toFixed(2), my: [0, 1, 2].map((c) => +myLow[c][i].toFixed(1)), rf: [0, 1, 2].map((c) => +rfLow[c][i].toFixed(1)), D: [0, 1, 2].map((c) => +D[c][i].toFixed(1)) }; };
+    // 얼굴이 사진 가장자리에 잘리면 점이 자른 영역 밖 → 안으로 묶는다(밖을 읽어 예외가 나면 굽기 전체가 실패했다)
+    const ix = (k: number) => Math.min(h - 1, Math.max(0, Math.round(dp[k].y))) * w + Math.min(w - 1, Math.max(0, Math.round(dp[k].x)));
+    const at0 = () => { const i = ix(205); return [+myBase[0][i].toFixed(1), +rfBase[0][i].toFixed(1)]; };
+    const at = (k: number) => { const i = ix(k); return { V: +V[i].toFixed(2), Cf: +Cf[i].toFixed(2), my: [0, 1, 2].map((c) => +myLow[c][i].toFixed(1)), rf: [0, 1, 2].map((c) => +rfLow[c][i].toFixed(1)), D: [0, 1, 2].map((c) => +D[c][i].toFixed(1)) }; };
     Object.assign(dbg, { amt, base: { my: [myBase[1][0], myBase[2][0]], rf: [rfBase[1][0], rfBase[2][0]] }, baseL: at0(), darkSkin: +darkSkin.toFixed(2), ita: +ita.toFixed(1), medL: [+myMedL.toFixed(1), +rfMedL.toFixed(1)],  cheekR: at(205), cheekL: at(425), lip: at(14), nose: at(6), npick: pick.length });
   }
   // 아이라인·속눈썹: 고른 사진에서 눈두덩 평균(얼굴 폭 5%)보다 어두운 정도를 내 눈두덩 평균 위에 놓는다(내 속눈썹이 더 어두우면 그대로)
