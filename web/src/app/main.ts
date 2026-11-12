@@ -48,6 +48,8 @@ import { FACE_CUT, applyPose, buildWarpMesh, cutMesh, headProxy, projectMesh, ro
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
+/** 타투 잉크 모델을 돌릴 크기(긴 변). 시험: `?inkside=1024` 처럼 주소로 바꿔 비교 */
+const INK_SIDES: readonly number[] = (params.get('inkside') ?? '768,576').split(',').map(Number).filter((v) => v >= 64);
 const base = new URL('./', location.href);
 const WASM_BASE = new URL('mediapipe/wasm', base).href;
 const canMp4 = document.createElement('video').canPlayType('video/mp4; codecs="avc1.4d401e"') !== '';
@@ -493,7 +495,7 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
       const hi = upscaleInkSource(r.tattooSrc.src, source, 1600);
       // 타투 잉크 모델(자체 학습): 잉크 확률을 함께 넘겨 밝기 대비 규칙이 놓친 잉크(분할이 옷으로 읽은 맨살 위)를 더하고 주름·그늘을 뺀다.
       // 모델을 못 불러오면 규칙만
-      hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, 1024).catch((err) => {
+      hi.src.inkProb = await tattooInkProb(hi.src.d, hi.src.w, hi.src.h, INK_SIDES).catch((err) => {
         console.warn('타투 잉크 모델을 쓰지 못했습니다(규칙만)', err);
         return undefined;
       });

@@ -8,6 +8,6 @@ import { ortWebRunner } from '../platform/ort-web.ts';
 const runner = ortWebRunner('models/tattoo-ink.onnx');
 
 /** 그림(RGBA, w×h) → 잉크 확률(0~1, w×h) */
-export function tattooInkProb(rgba: Uint8ClampedArray, w: number, h: number, maxSide = 768): Promise<Float32Array> {
+export function tattooInkProb(rgba: Uint8ClampedArray, w: number, h: number, maxSide: number | readonly number[] = 768): Promise<Float32Array> {
   return inkCore({ data: rgba, width: w, height: h }, runner, maxSide);
 }

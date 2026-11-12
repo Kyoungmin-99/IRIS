@@ -44,3 +44,17 @@ test('tattooInkProb: 실행기 입력은 16의 배수 NCHW(5단계 U-Net), 출�
   assert.equal(p.length, 600);
   assert.ok(p[0] > 0.99);
 });
+
+test('tattooInkProb: 크기를 여럿 주면 크기마다 돌려 확률을 평균, 같은 크기가 되면 한 번만', async () => {
+  const ran: string[] = [];
+  // 입력 너비 96 이상이면 로짓 +10(확률 ≈ 1), 아니면 −10(≈ 0) → 두 크기 평균은 0.5 근처
+  const runner = { run: async (t: { data: Float32Array; dims: number[] }) => { ran.push(`${t.dims[3]}x${t.dims[2]}`); return { data: new Float32Array(t.dims[2] * t.dims[3]).fill(t.dims[3] >= 96 ? 10 : -10), dims: [1, 1, t.dims[2], t.dims[3]] }; } };
+  const p = await tattooInkProb(img(192, 96, () => [10, 10, 10]), runner, [96, 48]);
+  assert.deepEqual(ran, ['96x48', '48x32']);
+  assert.equal(p.length, 192 * 96);
+  assert.ok(p.every((v) => Math.abs(v - 0.5) < 1e-3));
+  ran.length = 0;
+  const q = await tattooInkProb(img(30, 20, () => [10, 10, 10]), runner, [96, 48]);
+  assert.deepEqual(ran, ['32x32']);
+  assert.equal(q.length, 600);
+});

@@ -65,9 +65,9 @@ export async function ortNativeRunner(modelPath: string): Promise<ModelRunner> {
 | 출처 · 라이선스 | IRIS 자체 학습(`tools/train/tattoo`): 타투 없는 사진 피부에 무작위 도안(OFL 글꼴 레터링 포함)을 합성한 자료. 손톱 모델과 같은 작은 U-Net. 배경 사진은 IRIS testdata 수집 사진(colla2)·사용자 손 사진·코덱스 맨살 팔 사진 → 그 사진들의 권리 기록을 따름. 2026-10-27 부터 연구용 판은 실제 타투 도안 그림(Hugging Face `Drozdik/tattoo_v0` 4,370장, CC BY-NC-SA 4.0 — **연구용 판만**)을 절반 섞어 합성 |
 | 입력 | `image` float32 `[1, 3, H, W]`, RGB 0~1, **H·W 는 16의 배수면 아무 크기**(완전 합성곱, 5단계라 4번 반으로 줄임) |
 | 출력 | `logit` float32 `[1, 1, H, W]` |
-| core | `web/src/core/tattoo-ink.ts` — `tattooInkProb(img, runner, maxSide)` |
+| core | `web/src/core/tattoo-ink.ts` — `tattooInkProb(img, runner, maxSide)`. maxSide 에 크기를 여럿 주면 크기마다 돌려 확률을 평균한다 — 웹은 긴 변 768 · 576 두 번(실제 사진 301장: 1024 한 번 IoU 0.499 · 맨살 팔 오검출 9.5% → 0.553 · 4.8%, 계산량은 더 적음). 시험: `?inkside=1024` |
 
-**앞처리** (`toCHW`): 긴 변을 maxSide(웹 1024, 폰 768 권장)로 넓이 평균해 줄이고, 16의 배수로 오른쪽·아래를 검정으로 채운다.
+**앞처리** (`toCHW`): 긴 변을 maxSide(웹 768 · 576 두 번 평균, 폰 768 권장)로 넓이 평균해 줄이고, 16의 배수로 오른쪽·아래를 검정으로 채운다.
 **뒤처리** (`upsample`): 채운 칸을 뺀 유효 영역만 원래 크기로 양선형으로 키우며 시그모이드 → 잉크 확률(0~1, 원본 크기).
 **쓰는 곳**: 도안 뽑기(`tattoo-extract.ts`)의 `InkSource.inkProb` — 확신 잉크(0.6 넘음)가 처음 영역 밖에 절반 넘으면 `sureRect`(옷·배경 위는 뺀 확신 잉크 무리 상자)로 다시 고르고, 확신 잉크와 이어진 덩어리(규칙 잉크 + 확률 0.3 넘음)는 확률 0.1~0.3 도 잉크로(굵은 먹 막대 가운데), 확률 0.6 넘는 곳은 잉크로 더하고, 덩어리 평균 0.06 아래는 빼고, 0.5 넘는 덩어리는 몸 윤곽선으로 보지 않는다.
 
