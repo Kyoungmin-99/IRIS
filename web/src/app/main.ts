@@ -169,6 +169,8 @@ const tattoo = {
   amount: 0.85,
   /** 도안 시트 전체를 한 작품으로: 팔·다리를 감아(둘레 전체까지) 부위 길이를 꽉 채운다(긴팔·반팔 소매처럼) */
   wrap: false,
+  /** 📍 로 누른 곳(원본 사진 px). 팔 클로즈업처럼 관절점 축을 못 믿는 자리 계산에서 along·across 대신 쓴다 */
+  pick: undefined as { x: number; y: number } | undefined,
   /** 화면을 눌러 고른 부위 안 위치(없으면 가운데) */
   along: undefined as number | undefined,
   across: undefined as number | undefined,
@@ -309,6 +311,7 @@ function clearAll(): void {
   shadowOut = null;
   tattoo.design = null;
   tattoo.along = tattoo.across = undefined;
+  tattoo.pick = undefined;
   hairSticker = null; // 그리는 훅(engine.overlayDraw)은 그대로 둔다: 다시 입히면 바로 보이게
   off.clear();
   strength = 1;
@@ -533,6 +536,7 @@ async function applyPhoto(source: ImageBitmap | HTMLImageElement, mode: PhotoMod
     tattoo.wrap = sheetWhole;
     if (sheetWhole) tattoo.size = 1;
     tattoo.along = tattoo.across = undefined;
+    tattoo.pick = undefined;
     // 사진 모드: 팔 타투면 팔 대 팔로 옮겨 사진에 굽는다(still-tattoo.ts)
     // 블랙·블랙앤그레이 타투는 잉크를 무채색으로: 자홍 조명 아래 찍은 블랙앤그레이 소매(10번)가 내 팔에 보라 얼룩으로 옮겨졌다
     tatMono = r.ai?.hints?.tattoo?.color === 'black' || r.ai?.hints?.tattoo?.color === 'grey';
@@ -999,7 +1003,8 @@ type TatPlan =
   | { torso: { toRef: number[]; fromRef: number[] }; skin: Float32Array; ink: InkMap };
 /** 팔 대 팔로 못 옮긴 까닭(사용자 안내) */
 let tatNote = '';
-let tatPlan: { ref: RefTat; mine: ImageBitmap; p: Promise<TatPlan | null> } | null = null;
+/** handSize: 손등에 놓은 계획(handPlacePlan)은 📏 크기를 읽는다 → 그때의 크기(크기가 바뀌면 다시 계획). 그 밖은 undefined */
+let tatPlan: { ref: RefTat; mine: ImageBitmap; p: Promise<TatPlan | null>; handSize?: number } | null = null;
 /** 사진에 구운 팔 타투가 있으면 실시간 타투는 끈다 */
 function tatBaked(): boolean {
   if (!PHOTO_MODE || swapMode) return false;
@@ -1275,9 +1280,30 @@ async function closeArmPlacePlan(c: HTMLCanvasElement, aspect0: number): Promise
   let h = len * (0.25 + 0.6 * tattoo.size), w = h * aspect;
   if (w > maxW) { h *= maxW / w; w = maxW; }
   ({ w, h } = capTatMag(w, h, rotate ? c.width : c.height));
-  const lc = len * Math.min(0.92, Math.max(0.08, tattoo.along ?? 0.5));
-  const th0 = Math.asin(Math.min(0.95, Math.max(-0.95, tattoo.across ?? 0)));
+  // 📍 로 누른 곳이 있으면 그 점을 이 팔 띠의 축(시작→가운데→끝)에 내려 세로·옆 자리를 정한다: along·across 는 관절점으로 잡은
+  // 다른 축 기준이라(방향·부호가 제멋대로) 그대로 쓰면 누른 곳과 다른 데 구워졌다. 옆 좌표 sg 는 축의 perp(−dy, dx) 쪽·반폭 단위
+  const flip = uprightFlip(my.arm);
+  let alongL = len * Math.min(0.92, Math.max(0.08, tattoo.along ?? 0.5)), sgC = 0;
+  if (tattoo.pick) {
+    const A = my.arm, pt = tattoo.pick;
+    let acc = 0, bestD = Infinity;
+    for (const [p0, p1] of [[A.s, A.e], [A.e, A.w]] as const) {
+      const dx = p1.x - p0.x, dy = p1.y - p0.y, L = Math.hypot(dx, dy);
+      if (L > 1e-6) {
+        const t = Math.min(1, Math.max(0, ((pt.x - p0.x) * dx + (pt.y - p0.y) * dy) / (L * L)));
+        const off = ((pt.x - p0.x) * -dy + (pt.y - p0.y) * dx) / L;
+        const dd = Math.hypot(pt.x - (p0.x + dx * t), pt.y - (p0.y + dy * t));
+        if (dd < bestD) { bestD = dd; alongL = acc + L * t; sgC = off / (r || 1); }
+      }
+      acc += L;
+    }
+    alongL = Math.min(acc * 0.92, Math.max(acc * 0.08, alongL)) * (len / (acc || 1));
+    // 아래에서 축을 뒤집어 굽는 경우(src(len − l, −sg))에는 도안 좌표로 옮겨 둔다
+    if (flip) { alongL = len - alongL; sgC = -sgC; }
+  }
+  const lc = alongL;
   const R = 1.25;
+  const th0 = Math.asin(Math.min(0.95, Math.max(-0.95, sgC)) / R);
   const src = (l: number, sg: number) => {
     if (Math.abs(sg) > R) return null;
     const arc = r * R * (Math.asin(sg / R) - th0);
@@ -1287,7 +1313,6 @@ async function closeArmPlacePlan(c: HTMLCanvasElement, aspect0: number): Promise
     return { x: X * c.width, y: Y * c.height };
   };
   // 가까운 팔 사진은 어깨·손목 쪽을 알 수 없다: 가로 팔이면 왼→오른, 세로 팔이면 위→아래(글씨가 거꾸로 서지 않게)
-  const flip = uprightFlip(my.arm);
   return { dst: my.arm, skin: my.skin, ink: canvasInk(c), src: flip ? (l: number, sg: number) => src(len - l, -sg) : src };
 }
 /**
@@ -1376,6 +1401,7 @@ async function placeTattooPlan(): Promise<TatPlan | null> {
     if (m[1] === 'forearm' && to >= 0) {
       tattoo.place = `upperArm${to === 0 ? 'L' : 'R'}` as typeof tattoo.place;
       tattoo.along = tattoo.across = undefined;
+      tattoo.pick = undefined;
       tatNote = '고른 타투 자리(아래팔·손목)가 내 사진에선 보이지 않아요(사진 밖). 보이는 위팔에 미리 보여 드려요(📍 자리 고르기로 옮길 수 있어요)';
       return placeTattooPlan();
     }
@@ -1603,8 +1629,9 @@ function dbgTat(o: object): void {
 async function armTattooPlan(): Promise<TatPlan | null> {
   const ref = refTat, mine = photoOriginal;
   if (!ref || !mine) return null;
-  if (tatPlan?.ref !== ref || tatPlan.mine !== mine) {
+  if (tatPlan?.ref !== ref || tatPlan.mine !== mine || (tatPlan.handSize !== undefined && tatPlan.handSize !== tattoo.size)) {
     tatPlanOk = false;
+    let handSize: number | undefined;
     tatNote = '';
     const p = (async (): Promise<TatPlan | null> => {
       photoAnalyzer ??= new PhotoAnalyzer(WASM_BASE);
@@ -1855,6 +1882,7 @@ async function armTattooPlan(): Promise<TatPlan | null> {
         };
         const pick = ink !== designInk && mass(designInk) >= mass(ink) * 0.6 ? designInk : ink;
         dbgTat({ onHand: { design: Math.round(mass(designInk)), arm: Math.round(mass(ink)), useDesign: pick === designInk } });
+        handSize = tattoo.size;
         return handPlacePlan(pick, hand);
       };
       // 팔만 가까이 찍은 내 사진(관절점 팔 없음): 피부 덩어리로 읽은 내 팔 띠에, 고른 사진 팔 굵기 대 내 팔 굵기 비로 옮긴다.
@@ -1947,8 +1975,10 @@ async function armTattooPlan(): Promise<TatPlan | null> {
       console.warn('팔 타투 옮기기 실패(실시간 타투로)', err);
       return null;
     });
-    tatPlan = { ref, mine, p };
+    const entry: NonNullable<typeof tatPlan> = { ref, mine, p };
+    tatPlan = entry;
     const r = await p;
+    entry.handSize = handSize;
     if (tatPlan?.p === p) {
       tatPlanOk = !!r;
       applyTattooToEngine();
@@ -2049,12 +2079,15 @@ async function updateStillHairOnce(): Promise<void> {
     if (arm) {
       tattoo.place = arm;
       tattoo.along = tattoo.across = undefined;
+      tattoo.pick = undefined;
       tatNote = '고른 타투 자리(몸통·목)가 내 사진에선 옷에 가려 있어요. 보이는 팔에 미리 보여 드려요(📍 자리 고르기로 옮길 수 있어요)';
       applyTattooToEngine();
     }
   }
   // 팔 대 팔이 안 되면 고른 자리에 굽는다
   const placeOn = !plan && !!tattoo.design && !off.has('tattoo');
+  // 팔 대 팔을 이번에 돌리지 않았으면(📍 로 자리를 고른 뒤) 앞서 남은 '옷에 가려 보이지 않아요' 안내는 지운다: 고른 자리에 잘 구워도 그 안내가 떴다
+  if (placeOn && !tatOn) tatNote = '';
   if (placeOn) plan = await placeTattooPlan();
   // 어느 길로도 놓을 자리를 못 찾았는데 안내가 없으면(손가락만 크게 찍은 사진, 풍경을 도안으로 읽은 몸통 타투 등)
   // 아무 변화 없이 끝나 무엇이 잘못됐는지 몰랐다 → 늘 안내를 남긴다
@@ -2066,7 +2099,7 @@ async function updateStillHairOnce(): Promise<void> {
   // 고른 사진에서 화장을 읽었을 때만(얼굴이 보이는 사진)
   const mkOn = !!(mkSource && (mk.lip || mk.eye || mk.skin));
   const mkp = mkOn ? await makeupPlan() : null;
-  const key = `${mkp ? `${mk.lip}:${mk.eye}:${mk.skin}` : 0}|${amount.toFixed(3)}|${lastSource ? 1 : 0}|${nailOn ? myNails.length + ':' + strength.toFixed(2) + ':' + nailGen + ':' + chosen.nail.color?.join(',') : 0}|${plan ? strength.toFixed(2) : 0}|${placed ? pk : ''}`;
+  const key = `${mkp ? `${mk.lip}:${mk.eye}:${mk.skin}` : 0}|${amount.toFixed(3)}|${lastSource ? 1 : 0}|${nailOn ? myNails.length + ':' + strength.toFixed(2) + ':' + nailGen + ':' + chosen.nail.color?.join(',') : 0}|${plan ? pk : 0}`;
   // 네일을 골랐는데 내 손톱을 하나도 못 찾았으면(손이 작게 나온 전신 사진 등) 굽기 끝에 안내가 지워져 아무 일도 없는 듯 보였다
   // → 못 찾았다고 남긴다(손톱을 눌러 더하는 길도 함께). 같은 결과라 다시 굽지 않을 때도 다시 띄운다
   // 몇 개만 찾았을 때(전신 사진의 작은 손: 손끝을 눌러도 손가락 전체가 잡혀 열 손톱 중 하나만 칠해졌다)도 "다 찾았다"는 듯 보이지 않게 몇 개 놓쳤는지 남긴다
@@ -2897,6 +2930,16 @@ async function ensureNailsOnce(): Promise<void> {
     return;
   }
   nailsAuto = photoOriginal;
+  try {
+    await findMyNails(gone);
+  } catch (err) {
+    // 모델을 못 받는 등으로 실패했으면 '찾아 봤음' 표시를 지운다: 남겨 두면 다시 찾지 않고 '손톱을 찾지 못했어요'만 떴다
+    if (photoOriginal === orig && nailsAuto === orig) nailsAuto = null;
+    throw err;
+  }
+}
+/** 내 사진에서 손톱을 찾아 myNails 에 담고 다시 굽는다(ensureNailsOnce 의 뒷부분) */
+async function findMyNails(gone: () => boolean): Promise<void> {
   // 사진용 손 찾기(정지 사진 모드, 크기·여백 바꿔 여러 번)를 먼저: 실시간 추적은 영상용이라 사진에서도 실행 때마다
   // 손 점이 조금씩 달라(긴 네일 손은 한곳에 몰리기도) 찾는 손톱 수가 2~4개로 들쭉날쭉했다.
   // 못 찾으면 실시간 손 점이 잡힐 때까지 잠깐(실제 시간으로 2초까지만: 큰 사진은 기다림 한 번이 길어진다)
@@ -4161,6 +4204,7 @@ viewEl.addEventListener('pointerdown', (ev) => {
   }
   tattoo.place = hit.place;
   tattoo.along = hit.along;
+  tattoo.pick = { x: fx * cv.width, y: fy * cv.height };
   tattoo.across = hit.across;
   // 사진 모드: 자리를 직접 고르면 팔 대 팔 옮기기 대신 그 자리에 굽는다
   if (PHOTO_MODE) refTat = null;

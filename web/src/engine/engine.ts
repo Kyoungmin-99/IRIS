@@ -213,7 +213,7 @@ export class BeautyEngine {
       effects.push((t) => this.hairFx.draw(hair, t, hairSpan(face, h)));
     }
     if (face && regions && hasAnyMakeup(this.look)) {
-      effects.push((t) => this.makeup.draw(regions, this.look, t.cam, t.seg, t, face.confidence));
+      effects.push((t) => this.makeup.draw(regions, this.look, t.cam, t.seg, t, face.confidence, t.hasSeg));
     }
     const t2 = performance.now();
     this.renderer.draw({ useSeg: this.settings.useSeg, refine: this.settings.refine, debugSeg: this.settings.debugSeg, effects, temporal: this.temporalBlend(face, w) });
