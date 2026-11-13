@@ -2300,6 +2300,29 @@ function rankNails(rgba: Uint8ClampedArray, w: number, h: number, nails: { mask:
   const areas = nails.map(area).sort((a, b) => a - b), medA = areas[areas.length >> 1];
   const whole = q.filter((v) => area(v.n) >= medA * 0.35);
   if (whole.length >= 3 && whole.length < q.length) q.splice(0, q.length, ...whole);
+  // 반대로 넓이 가운데 값의 2.5배 넘고 평균 색이 나머지 손톱들과 크게 다르면(Lab 거리 25 넘음) 손톱과 손가락 살을 한 덩어리로 잡은 것:
+  // 초록 글리터 사진에서 엄지 손톱 + 엄지 살(넓이 4.2배, 갈색)이 이렇게 잡혀 내 손톱 하나에 살색 판이 찍혔다. 살색 비율 거르기는
+  // 둘레 띠가 배경(흰 벽)이라 피부색 기준이 틀어져 못 잡았다
+  if (q.length >= 4) {
+    const lab = new Float32Array(3);
+    const meanLab = (m: Uint8Array): number[] => {
+      let r = 0, g = 0, b = 0, c = 0;
+      for (let i = 0; i < m.length; i++) if (m[i]) { r += rgba[i * 4]; g += rgba[i * 4 + 1]; b += rgba[i * 4 + 2]; c++; }
+      rgb2lab(r / c, g / c, b / c, lab);
+      return [lab[0], lab[1], lab[2]];
+    };
+    const labs = q.map((v) => meanLab(v.n.mask));
+    const keep = q.filter((v, k) => {
+      if (area(v.n) <= medA * 2.5) return true;
+      const others = labs.filter((_, j) => j !== k);
+      const med = [0, 1, 2].map((c) => others.map((l) => l[c]).sort((a, b) => a - b)[others.length >> 1]);
+      return Math.hypot(labs[k][0] - med[0], labs[k][1] - med[1], labs[k][2] - med[2]) <= 25;
+    });
+    if (keep.length >= 3 && keep.length < q.length) {
+      console.log('[nail] 고른 사진 손톱 중 손가락 살까지 크게 잡힌 것 뺌', q.length, '→', keep.length);
+      q.splice(0, q.length, ...keep);
+    }
+  }
   // 또렷함 기준은 조각을 뺀 뒤에 잰다: 먼저 재면 가장 또렷한 조각이 기준이 돼 온전한 손톱이 모두 '흐림'으로 떨어지고
   // (둘 미만이라) 흐린 손톱 거르기가 통째로 꺼졌다
   const best = Math.max(...q.map((v) => v.sharp));
@@ -2890,7 +2913,11 @@ async function findRefNails(): Promise<void> {
     // 단, 셋 넘게 찾았고 색이 뚜렷하면(채도 15 넘게) 그늘·흰 털옷(채도 낮음)이 아니다: 올리브 손톱(채도 30)이 AI 이름 '민트·그린'의
     // 민트색과 달라 버려지고 민트 가상 손톱이 칠해졌다
     const vivid = best.length >= 3 && Math.hypot(lab[1], lab[2]) >= 15;
-    if (!vivid && (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60)) {
+    // 프렌치·선 디자인은 AI 색 이름이 바탕이 아니라 끝·선 색이다(살색 바탕에 검은 선 → '블랙'): 제대로 찾은 살색 손톱 둘을
+    // '색이 다르다'며 버리고 손톱 전체를 검정 단색으로 칠했다(실제 사진으로 확인) → 프렌치면 이름 색과 견주지 않는다
+    const st = lastStyle as { nail?: { style?: string }; ai?: { hints?: { nail?: { style?: string } } } } | null;
+    const tipLabel = st?.ai?.hints?.nail?.style === 'french' || st?.nail?.style === 'french';
+    if (!vivid && !tipLabel && (Math.hypot(lab[1] - lab2[1], lab[2] - lab2[2]) > 13 || Math.abs(lab[0] - lab2[0]) > 60)) {
       refNails = { src, rgba, w, h, nails: [] };
       return;
     }
